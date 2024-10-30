@@ -13,7 +13,7 @@ load_dotenv()
 anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
 def prepare_lawyer_summary(availability_data, bios_data):
-    """Create a concise summary of lawyer information"""
+    """Create a more detailed summary of lawyer information"""
     # Merge the dataframes
     availability_data['Name'] = availability_data['What is your name?'].str.strip()
     bios_data['Name'] = bios_data['First Name'].str.strip() + ' ' + bios_data['Last Name'].str.strip()
@@ -33,13 +33,19 @@ def prepare_lawyer_summary(availability_data, bios_data):
             bio_row = bio_row.iloc[0]
             summary = {
                 'name': name,
-                'availability': row['What is your capacity to take on new work?'],
+                'level': bio_row.get('Level/Title', ''),
+                'call_year': bio_row.get('Call', ''),
+                'availability_status': row['Do you have capacity to take on new work?'],
                 'practice_areas': bio_row.get('Area of Practise + Add Info', ''),
-                'experience': bio_row.get('Industry Experience', ''),
+                'industry_experience': bio_row.get('Industry Experience', ''),
+                'previous_companies': bio_row.get('Previous Companies/Firms', ''),
+                'notable_experience': bio_row.get('Notable Items/Personal Details', ''),
                 'days_available': row.get('What is your capacity to take on new work for the forseeable future? Days per week', ''),
                 'hours_available': row.get('What is your capacity to take on new work for the foreseeable future? Hours per month', ''),
                 'availability_notes': row.get('Do you have any comments or instructions you should let us know about that may impact your short/long-term availability? For instance, are you going on vacation (please provide exact dates)?', ''),
-                'engagement_types': row.get('What type of engagement would you like to consider?', '')
+                'engagement_types': row.get('What type of engagement would you like to consider?', ''),
+                'location': bio_row.get('Location', ''),
+                'languages': bio_row.get('Languages', '')
             }
             lawyers_summary.append(summary)
     
@@ -65,33 +71,43 @@ def extract_recommended_lawyers(analysis_text, lawyers_summary):
 def get_claude_response(query, lawyers_summary):
     """Get Claude's analysis of the best lawyer matches"""
     
-    # Create a concise summary text
+    # Create a more detailed summary text
     summary_text = "Available Lawyers:\n"
     for lawyer in lawyers_summary:
-        summary_text += f"\n{lawyer['name']}:"
+        summary_text += f"\n{lawyer['name']} ({lawyer['level']}, Called to Bar: {lawyer['call_year']}):"
         summary_text += f"\n- Practice Areas: {lawyer['practice_areas']}"
-        summary_text += f"\n- Experience: {lawyer['experience']}"
-        summary_text += f"\n- Availability: {lawyer['days_available']} days/week, {lawyer['hours_available']}/month"
+        summary_text += f"\n- Industry Experience: {lawyer['industry_experience']}"
+        if lawyer['previous_companies']:
+            summary_text += f"\n- Previous Experience: {lawyer['previous_companies']}"
+        if lawyer['notable_experience']:
+            summary_text += f"\n- Notable Experience: {lawyer['notable_experience']}"
+        summary_text += f"\n- Current Availability: {lawyer['availability_status']}"
+        summary_text += f"\n  • Days/week: {lawyer['days_available']}"
+        summary_text += f"\n  • Hours/month: {lawyer['hours_available']}"
+        summary_text += f"\n  • Engagement Types: {lawyer['engagement_types']}"
+        summary_text += f"\n  • Location: {lawyer['location']}\n"
     
-    prompt = f"""You are helping match lawyers to client needs. You must be completely honest and direct - if there are no good matches for the client's needs, say so explicitly rather than suggesting lawyers who don't truly match the requirements.
+    prompt = f"""You are helping match lawyers to client needs. Please analyze each lawyer's expertise and availability carefully and be direct about matches or lack thereof.
 
 Client Need: {query}
 
 Available Lawyers:
 {summary_text}
 
-Please analyze the client's needs and the available lawyers. If there are good matches:
-1. Recommend 3-5 best matching lawyers
-2. Explain specifically why each one matches the requirements
-3. Include their availability details
+If any lawyers match the client's needs, please recommend 3-5 best matches, clearly explaining:
+1. Their relevant expertise and experience for this specific need
+2. Their current availability
+3. Why they would be a good fit
 
-However, if there are no lawyers who truly match the client's needs, explicitly say so and explain what specific expertise or experience is missing. Do not recommend lawyers who don't have clear evidence of the required expertise in their profiles.
+If no lawyers have demonstrated expertise in the required area, please say so directly and explain what expertise is missing.
 
-Remember: It's better to say there isn't a good match than to recommend someone who doesn't have the right expertise.
+Be specific in your recommendations and only suggest lawyers who have clear evidence of the required expertise in their profiles.
 
 Format recommendations as numbered points starting with the lawyer's name, like:
 1. [Lawyer Name]: [Explanation]
-2. [Lawyer Name]: [Explanation]"""
+2. [Lawyer Name]: [Explanation]
+
+Important: Only recommend lawyers if you see clear evidence in their profile that they have the specific expertise needed."""
 
     try:
         response = anthropic.messages.create(
@@ -129,7 +145,7 @@ def main():
     try:
         # Load the data files with correct names
         availability_data = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
-        bios_data = pd.read_csv('BD_Caravel.csv')
+        bios_data = pd.read_csv('BC_Caravel.csv')
         
         # Prepare summary once at startup
         lawyers_summary = prepare_lawyer_summary(availability_data, bios_data)
@@ -186,6 +202,7 @@ def main():
             
         if analysis:
             # First display the analysis
+            st.write("### Analysis")
             st.write(analysis)
             
             # Then extract and display availability details for recommended lawyers
