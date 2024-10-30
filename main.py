@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from anthropic import Anthropic
 from dotenv import load_dotenv
+import json
 import os
 
 # Load environment variables
@@ -21,43 +22,66 @@ def load_data():
     
     return pd.merge(availability_df, bios_df, on='Name', how='inner')
 
+def format_lawyer_info(df):
+    """Format lawyer information in a clear, readable way"""
+    lawyers_info = []
+    
+    for _, row in df.iterrows():
+        # Only include lawyers who are available
+        if str(row.get('Do you have capacity to take on new work?', '')).lower() == 'yes':
+            lawyer = {
+                'name': row['Name'],
+                'availability': {
+                    'days_per_week': str(row.get('What is your capacity to take on new work for the forseeable future? Days per week', '')),
+                    'hours_per_month': str(row.get('What is your capacity to take on new work for the foreseeable future? Hours per month', '')),
+                    'notes': str(row.get('Do you have any comments or instructions you should let us know about that may impact your short/long-term availability? For instance, are you going on vacation (please provide exact dates)?', ''))
+                },
+                'expertise': {
+                    'level': str(row.get('Level/Title', '')),
+                    'call_year': str(row.get('Call', '')),
+                    'practice_areas': str(row.get('Area of Practise + Add Info', '')),
+                    'industry_experience': str(row.get('Industry Experience', '')),
+                    'previous_companies': str(row.get('Previous Companies/Firms', '')),
+                    'notable_experience': str(row.get('Notable Items/Personal Details', ''))
+                },
+                'location': str(row.get('Location', '')),
+                'languages': str(row.get('Languages', ''))
+            }
+            lawyers_info.append(lawyer)
+    
+    return lawyers_info
+
 def get_claude_analysis(query, df):
     """Have Claude analyze the entire dataset and recommend lawyers"""
     
-    # Convert relevant dataframe information to a structured format
-    lawyers_info = []
-    for _, row in df.iterrows():
-        lawyer_info = {
-            'name': row['Name'],
-            'availability': {
-                'has_capacity': row['Do you have capacity to take on new work?'],
-                'days_per_week': row['What is your capacity to take on new work for the forseeable future? Days per week'],
-                'hours_per_month': row['What is your capacity to take on new work for the foreseeable future? Hours per month'],
-                'notes': row['Do you have any comments or instructions you should let us know about that may impact your short/long-term availability? For instance, are you going on vacation (please provide exact dates)?']
-            },
-            'expertise': {
-                'practice_areas': row['Area of Practise + Add Info'],
-                'industry_experience': row['Industry Experience'],
-                'call_year': row['Call'],
-                'notable_experience': row['Notable Items/Personal Details']
-            }
-        }
-        lawyers_info.append(lawyer_info)
+    lawyers_info = format_lawyer_info(df)
+    
+    # Create a more readable format of the lawyers' information
+    lawyers_text = "\n\nAVAILABLE LAWYERS:\n"
+    for lawyer in lawyers_info:
+        lawyers_text += f"\n{lawyer['name']}:\n"
+        lawyers_text += f"- Level/Call Year: {lawyer['expertise']['level']} ({lawyer['expertise']['call_year']})\n"
+        lawyers_text += f"- Practice Areas: {lawyer['expertise']['practice_areas']}\n"
+        lawyers_text += f"- Industry Experience: {lawyer['expertise']['industry_experience']}\n"
+        lawyers_text += f"- Availability: {lawyer['availability']['days_per_week']} days/week, {lawyer['availability']['hours_per_month']}/month\n"
+        if lawyer['availability']['notes'] and lawyer['availability']['notes'].lower() not in ['n/a', 'na', 'none', 'no']:
+            lawyers_text += f"- Availability Notes: {lawyer['availability']['notes']}\n"
+        if lawyer['expertise']['notable_experience'] and lawyer['expertise']['notable_experience'].lower() not in ['n/a', 'na', 'none', 'no']:
+            lawyers_text += f"- Notable Experience: {lawyer['expertise']['notable_experience']}\n"
 
-    prompt = f"""You are a highly knowledgeable legal staffing professional with access to a database of lawyers. A client has the following need:
+    prompt = f"""You are a knowledgeable legal staffing professional helping match lawyers to client needs. A client has the following need:
 
 {query}
 
-I'll show you information about available lawyers, and I'd like you to:
+Based on the available lawyers' information below, please:
 1. Analyze which lawyers would be the best fit
 2. Explain your reasoning
-3. Suggest a clear recommendation
-4. Mention any potential alternatives worth considering
+3. Provide clear recommendations
+4. Suggest alternatives if relevant
 
-Here is the lawyer information:
-{lawyers_info}
+{lawyers_text}
 
-Please approach this analysis as you would a natural conversation, focusing on the most relevant details and providing clear, practical recommendations. Consider both expertise match and actual availability.
+Please consider both expertise match and actual availability. Focus on finding the best practical matches for the client's needs.
 
 Format your response as:
 
@@ -78,7 +102,7 @@ AVAILABILITY NOTES:
     try:
         response = anthropic.messages.create(
             model="claude-3-sonnet-20240229",
-            max_tokens=1000,
+            max_tokens=1500,
             messages=[{
                 "role": "user",
                 "content": prompt
@@ -112,18 +136,33 @@ def main():
         "Need a lawyer experienced with startups and financing",
         "Who would be best for drafting and negotiating SaaS agreements?"
     ]
-    for example in examples:
-        if st.button(f"🔍 {example}"):
-            st.session_state.query = example
+    
+    # Create two columns for example queries
+    col1, col2 = st.columns(2)
+    for i, example in enumerate(examples):
+        if i % 2 == 0:
+            if col1.button(f"🔍 {example}"):
+                st.session_state.query = example
+        else:
+            if col2.button(f"🔍 {example}"):
+                st.session_state.query = example
 
     # Custom query input
     query = st.text_area(
-        "Describe what you're looking for:",
+        "Or describe what you're looking for:",
         value=st.session_state.get('query', ''),
         help="Be as specific as you can about your needs"
     )
 
-    if st.button("Find Lawyers") or 'query' in st.session_state:
+    col1, col2 = st.columns([1, 4])
+    search = col1.button("Find Lawyers")
+    clear = col2.button("Clear and Start Over")
+
+    if clear:
+        st.session_state.pop('query', None)
+        st.experimental_rerun()
+
+    if search or 'query' in st.session_state:
         if query:
             with st.spinner("Analyzing available lawyers..."):
                 analysis = get_claude_analysis(query, df)
@@ -145,11 +184,6 @@ def main():
                         st.write(section.replace('AVAILABILITY NOTES:', '').strip())
         else:
             st.warning("Please enter your requirements or select an example query.")
-
-    # Clear the session state if needed
-    if st.button("Clear and Start Over"):
-        st.session_state.pop('query', None)
-        st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
