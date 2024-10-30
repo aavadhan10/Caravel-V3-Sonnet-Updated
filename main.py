@@ -74,7 +74,7 @@ def main():
     try:
         # Load the data files
         availability_df = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
-        bios_df = pd.read_csv('BC_Caravel.csv')
+        bios_df = pd.read_csv('BD_Caravel.csv')
     except Exception as e:
         st.error(f"Error loading data files: {str(e)}")
         return
