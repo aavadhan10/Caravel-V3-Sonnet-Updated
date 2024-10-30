@@ -15,7 +15,7 @@ def prepare_lawyer_summary(availability_data, bios_data):
     """Create a concise summary of lawyer information"""
     # Merge the dataframes
     availability_data['Name'] = availability_data['What is your name?'].str.strip()
-    bios_data['Name'] = bios_data['First Name'].str.strip() + ' ' + bios_df['Last Name'].str.strip()
+    bios_data['Name'] = bios_data['First Name'].str.strip() + ' ' + bios_data['Last Name'].str.strip()
     
     lawyers_summary = []
     
@@ -98,9 +98,9 @@ def main():
     st.title("Caravel Law Lawyer Matcher")
     
     try:
-        # Load the data files
+        # Load the data files with correct names
         availability_data = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
-        bios_data = pd.read_csv('BD_Caravel.csv')
+        bios_data = pd.read_csv('BC_Caravel.csv')  # Fixed filename
         
         # Prepare summary once at startup
         lawyers_summary = prepare_lawyer_summary(availability_data, bios_data)
