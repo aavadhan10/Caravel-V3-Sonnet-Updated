@@ -7,9 +7,30 @@ import os
 import re
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+import time
+from typing import List, Dict
 
 # Load environment variables
 load_dotenv()
+
+def retry_with_exponential_backoff(func):
+    """Decorator for retrying functions with exponential backoff"""
+    def wrapper(*args, **kwargs):
+        max_retries = 5
+        retry_delay = 1  # Initial delay in seconds
+        
+        for retry in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                if "rate_limit_error" in str(e):
+                    if retry < max_retries - 1:
+                        delay = retry_delay * (2 ** retry)  # Exponential backoff
+                        st.warning(f"Rate limit reached. Waiting {delay} seconds before retry...")
+                        time.sleep(delay)
+                        continue
+                raise e
+    return wrapper
 
 class LawyerMatcher:
     def __init__(self):
@@ -18,7 +39,7 @@ class LawyerMatcher:
         self.bios_df = None
         self.lawyer_embeddings = None
         
-    def load_data(self, availability_path, bios_path):
+    def load_data(self, availability_path: str, bios_path: str):
         """Load and prepare lawyer data"""
         self.availability_df = pd.read_csv(availability_path)
         self.bios_df = pd.read_csv(bios_path)
@@ -35,31 +56,71 @@ class LawyerMatcher:
             show_progress_bar=True
         )
 
-    def rank_lawyers(self, query):
-        """Rank lawyers by relevance but return all data"""
-        # Generate embedding for the query
+    def rank_lawyers(self, query: str) -> pd.DataFrame:
+        """Rank lawyers by relevance to query"""
         query_embedding = self.model.encode([query])
-        
-        # Calculate similarity scores
         similarities = cosine_similarity(query_embedding, self.lawyer_embeddings)[0]
-        
-        # Add similarity scores to bios dataframe
         self.bios_df['relevance_score'] = similarities
-        
-        # Sort bios by relevance
-        sorted_bios = self.bios_df.sort_values('relevance_score', ascending=False)
-        
-        return sorted_bios
+        return self.bios_df.sort_values('relevance_score', ascending=False)
 
-def extract_recommended_lawyers(analysis_text, availability_df):
+def chunk_data(bios_df: pd.DataFrame, availability_df: pd.DataFrame, chunk_size: int = 5) -> List[Dict[str, pd.DataFrame]]:
+    """Split data into smaller chunks"""
+    chunks = []
+    
+    # Sort both dataframes by the same lawyer names to maintain alignment
+    lawyer_names = bios_df['What is your name?'].tolist()
+    availability_df = availability_df[availability_df['What is your name?'].isin(lawyer_names)]
+    
+    # Create chunks
+    for i in range(0, len(bios_df), chunk_size):
+        chunk_bios = bios_df.iloc[i:i + chunk_size]
+        chunk_lawyers = chunk_bios['What is your name?'].tolist()
+        chunk_availability = availability_df[availability_df['What is your name?'].isin(chunk_lawyers)]
+        
+        chunks.append({
+            'bios': chunk_bios,
+            'availability': chunk_availability
+        })
+    
+    return chunks
+
+@retry_with_exponential_backoff
+def process_chunk(query: str, chunk: Dict[str, pd.DataFrame]) -> str:
+    """Process a single chunk of data with Claude"""
+    anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+    
+    prompt = f"""I have information about a subset of lawyers. Please analyze if any match this need:
+
+{query}
+
+Availability information:
+{chunk['availability'].to_string()}
+
+Lawyer bios and expertise:
+{chunk['bios'].to_string()}
+
+Please recommend any lawyers from this group that clearly match the need. If none have the specific expertise required, please say so directly. Be honest - only recommend lawyers if you see clear evidence they have the relevant experience.
+
+If recommending lawyers, please format their names clearly with numbers like:
+1. [Lawyer Name]: [Explanation]
+2. [Lawyer Name]: [Explanation]"""
+
+    response = anthropic.messages.create(
+        model="claude-3-sonnet-20240229",
+        max_tokens=1000,
+        messages=[{
+            "role": "user",
+            "content": prompt
+        }]
+    )
+    return response.content[0].text
+
+def extract_recommended_lawyers(analysis_text: str, availability_df: pd.DataFrame) -> List[Dict]:
     """Extract recommended lawyer names and their availability info"""
     recommended_lawyers = []
-    
-    # Look for numbered recommendations
     pattern = r'\d+\.\s+([A-Za-z\s]+):'
     matches = re.findall(pattern, analysis_text)
     
-    # Get availability info for each recommended lawyer
     for name in matches:
         name = name.strip()
         lawyer_info = availability_df[availability_df['What is your name?'].str.contains(name, case=False, na=False)]
@@ -74,47 +135,6 @@ def extract_recommended_lawyers(analysis_text, availability_df):
             recommended_lawyers.append(lawyer)
     
     return recommended_lawyers
-
-def get_claude_response(query, availability_df, bios_df, ranked=True):
-    """Get Claude's analysis with ranked data"""
-    anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
-    
-    prompt = f"""I have two CSV files with lawyer information. Please look at both and recommend lawyers that match this need:
-
-{query}
-
-First file (Availability information):
-{availability_df.to_string()}
-
-Second file (Lawyer bios and expertise - {"ranked by relevance to query" if ranked else "unranked"}):
-{bios_df.to_string()}
-
-Please analyze these files and recommend any lawyers that clearly match the need. If no lawyers have the specific expertise required, please say so directly. Be honest - only recommend lawyers if you see clear evidence they have the relevant experience.
-
-If recommending lawyers, please format their names clearly with numbers like:
-1. [Lawyer Name]: [Explanation]
-2. [Lawyer Name]: [Explanation]"""
-
-    try:
-        response = anthropic.messages.create(
-            model="claude-3-sonnet-20240229",
-            max_tokens=1500,
-            messages=[{
-                "role": "user",
-                "content": prompt
-            }]
-        )
-        return response.content[0].text
-    except Exception as e:
-        st.error(f"Error getting recommendations: {str(e)}")
-        return None
-
-def chunk_dataframe(df, max_chars=8000):
-    """Split dataframe into chunks to manage token count"""
-    total_chars = df.to_string().count('')
-    num_chunks = -(-total_chars // max_chars)  # Ceiling division
-    chunk_size = len(df) // num_chunks
-    return [df[i:i + chunk_size] for i in range(0, len(df), chunk_size)]
 
 def main():
     st.title("Caravel Law Lawyer Matcher")
@@ -176,58 +196,47 @@ def main():
     # Process search
     if st.session_state.get('query'):
         with st.spinner("Finding the best matches..."):
-            # Rank lawyers by relevance while keeping all data
+            # Rank lawyers by relevance
             ranked_bios = st.session_state.matcher.rank_lawyers(st.session_state.query)
             
-            # If we get a rate limit error, try with chunked data
-            try:
-                analysis = get_claude_response(
-                    st.session_state.query,
-                    st.session_state.matcher.availability_df,
-                    ranked_bios
+            # Split data into chunks
+            chunks = chunk_data(ranked_bios, st.session_state.matcher.availability_df)
+            
+            # Process each chunk
+            all_analyses = []
+            progress_bar = st.progress(0)
+            
+            for i, chunk in enumerate(chunks):
+                chunk_analysis = process_chunk(st.session_state.query, chunk)
+                if chunk_analysis and any(re.findall(r'\d+\.\s+([A-Za-z\s]+):', chunk_analysis)):
+                    all_analyses.append(chunk_analysis)
+                progress_bar.progress((i + 1) / len(chunks))
+            
+            # Combine results
+            if all_analyses:
+                analysis = "\n\n".join(all_analyses)
+                
+                # Display Claude's analysis
+                st.write(analysis)
+                
+                # Extract and show availability for recommended lawyers
+                recommended_lawyers = extract_recommended_lawyers(
+                    analysis, 
+                    st.session_state.matcher.availability_df
                 )
-            except Exception as e:
-                if "rate_limit_error" in str(e):
-                    st.warning("Processing larger dataset in chunks...")
-                    # Split data into chunks and process
-                    bio_chunks = chunk_dataframe(ranked_bios)
-                    availability_chunks = chunk_dataframe(st.session_state.matcher.availability_df)
-                    
-                    analyses = []
-                    for bio_chunk, avail_chunk in zip(bio_chunks, availability_chunks):
-                        chunk_analysis = get_claude_response(
-                            st.session_state.query,
-                            avail_chunk,
-                            bio_chunk
-                        )
-                        if chunk_analysis:
-                            analyses.append(chunk_analysis)
-                    
-                    analysis = "\n\n".join(analyses) if analyses else None
-                else:
-                    st.error(f"Error: {str(e)}")
-                    analysis = None
-            
-        if analysis:
-            # Display Claude's analysis
-            st.write(analysis)
-            
-            # Extract and show availability for recommended lawyers
-            recommended_lawyers = extract_recommended_lawyers(
-                analysis, 
-                st.session_state.matcher.availability_df
-            )
-            
-            if recommended_lawyers:
-                st.write("\n### Availability Details")
-                for lawyer in recommended_lawyers:
-                    with st.expander(f"📅 {lawyer['name']}'s Availability"):
-                        st.write("**Days per Week:**", lawyer['days_available'])
-                        st.write("**Hours per Month:**", lawyer['hours_available'])
-                        if lawyer['engagement_types'] and str(lawyer['engagement_types']).lower() not in ['n/a', 'na', 'none', 'no']:
-                            st.write("**Preferred Engagement Types:**", lawyer['engagement_types'])
-                        if lawyer['availability_notes'] and str(lawyer['availability_notes']).lower() not in ['n/a', 'na', 'none', 'no']:
-                            st.write("**Availability Notes:**", lawyer['availability_notes'])
+                
+                if recommended_lawyers:
+                    st.write("\n### Availability Details")
+                    for lawyer in recommended_lawyers:
+                        with st.expander(f"📅 {lawyer['name']}'s Availability"):
+                            st.write("**Days per Week:**", lawyer['days_available'])
+                            st.write("**Hours per Month:**", lawyer['hours_available'])
+                            if lawyer['engagement_types'] and str(lawyer['engagement_types']).lower() not in ['n/a', 'na', 'none', 'no']:
+                                st.write("**Preferred Engagement Types:**", lawyer['engagement_types'])
+                            if lawyer['availability_notes'] and str(lawyer['availability_notes']).lower() not in ['n/a', 'na', 'none', 'no']:
+                                st.write("**Availability Notes:**", lawyer['availability_notes'])
+            else:
+                st.warning("No matching lawyers found.")
 
 if __name__ == "__main__":
     main()
