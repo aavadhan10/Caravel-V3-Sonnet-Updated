@@ -3,6 +3,7 @@ import pandas as pd
 from anthropic import Anthropic
 from dotenv import load_dotenv
 import os
+import time
 
 # Load environment variables
 load_dotenv()
@@ -10,28 +11,63 @@ load_dotenv()
 # Initialize Anthropic client
 anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
-def get_claude_response(query, availability_data, bios_data):
+def prepare_lawyer_summary(availability_data, bios_data):
+    """Create a concise summary of lawyer information"""
+    # Merge the dataframes
+    availability_data['Name'] = availability_data['What is your name?'].str.strip()
+    bios_data['Name'] = bios_data['First Name'].str.strip() + ' ' + bios_df['Last Name'].str.strip()
+    
+    lawyers_summary = []
+    
+    # Get available lawyers
+    available_lawyers = availability_data[
+        availability_data['Do you have capacity to take on new work?'].str.lower().isin(['yes', 'maybe'])
+    ]
+    
+    for _, row in available_lawyers.iterrows():
+        name = row['Name']
+        bio_row = bios_data[bios_data['Name'] == name]
+        
+        if not bio_row.empty:
+            bio_row = bio_row.iloc[0]
+            summary = {
+                'name': name,
+                'availability': row['What is your capacity to take on new work?'],
+                'practice_areas': bio_row.get('Area of Practise + Add Info', ''),
+                'experience': bio_row.get('Industry Experience', ''),
+                'days_available': row.get('What is your capacity to take on new work for the forseeable future? Days per week', ''),
+                'hours_available': row.get('What is your capacity to take on new work for the foreseeable future? Hours per month', '')
+            }
+            lawyers_summary.append(summary)
+    
+    return lawyers_summary
+
+def get_claude_response(query, lawyers_summary):
     """Get Claude's analysis of the best lawyer matches"""
     
-    prompt = f"""Given these two datasets about lawyers and their availability, please analyze and recommend 3-5 best matches for the client's needs.
+    # Create a concise summary text
+    summary_text = "Available Lawyers:\n"
+    for lawyer in lawyers_summary:
+        summary_text += f"\n{lawyer['name']}:"
+        summary_text += f"\n- Practice Areas: {lawyer['practice_areas']}"
+        summary_text += f"\n- Experience: {lawyer['experience']}"
+        summary_text += f"\n- Availability: {lawyer['days_available']} days/week, {lawyer['hours_available']}/month"
+    
+    prompt = f"""Based on the following lawyer profiles, recommend 3-5 best matches for this client need:
 
 Client Need: {query}
 
-Lawyer Availability Data:
-{availability_data.to_string()}
+{summary_text}
 
-Lawyer Bio Data:
-{bios_data.to_string()}
-
-Please recommend 3-5 lawyers who would be the best fit, considering their expertise and current availability. Format your response with:
-1. A brief analysis of why these lawyers would be good matches
-2. The specific recommendations with their key qualifications and availability
-3. Any important notes about their expertise or availability"""
+Please provide:
+1. 3-5 recommended lawyers ranked by fit
+2. Brief explanation for each recommendation
+3. Their availability details"""
 
     try:
         response = anthropic.messages.create(
             model="claude-3-sonnet-20240229",
-            max_tokens=2000,
+            max_tokens=1000,
             messages=[{
                 "role": "user",
                 "content": prompt
@@ -39,6 +75,22 @@ Please recommend 3-5 lawyers who would be the best fit, considering their expert
         )
         return response.content[0].text
     except Exception as e:
+        if 'rate_limit_error' in str(e):
+            st.warning("Rate limit reached. Waiting a moment before trying again...")
+            time.sleep(5)  # Wait 5 seconds before retry
+            try:
+                response = anthropic.messages.create(
+                    model="claude-3-sonnet-20240229",
+                    max_tokens=1000,
+                    messages=[{
+                        "role": "user",
+                        "content": prompt
+                    }]
+                )
+                return response.content[0].text
+            except Exception as e2:
+                st.error("Still unable to get recommendations. Please try again in a moment.")
+                return None
         st.error(f"Error getting recommendations: {str(e)}")
         return None
 
@@ -49,6 +101,10 @@ def main():
         # Load the data files
         availability_data = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
         bios_data = pd.read_csv('BD_Caravel.csv')
+        
+        # Prepare summary once at startup
+        lawyers_summary = prepare_lawyer_summary(availability_data, bios_data)
+        
     except Exception as e:
         st.error(f"Error loading data files: {str(e)}")
         return
@@ -97,7 +153,7 @@ def main():
     # Process search
     if st.session_state.get('query'):
         with st.spinner("Finding the best matches..."):
-            results = get_claude_response(st.session_state.query, availability_data, bios_data)
+            results = get_claude_response(st.session_state.query, lawyers_summary)
             
         if results:
             st.write(results)
