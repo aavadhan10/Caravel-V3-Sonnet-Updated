@@ -100,7 +100,7 @@ def main():
     try:
         # Load the data files with correct names
         availability_data = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
-        bios_data = pd.read_csv('BC_Caravel.csv')  # Fixed filename
+        bios_data = pd.read_csv('BD_Caravel.csv')  # Fixed filename
         
         # Prepare summary once at startup
         lawyers_summary = prepare_lawyer_summary(availability_data, bios_data)
