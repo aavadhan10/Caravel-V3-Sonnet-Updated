@@ -12,127 +12,135 @@ anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
 def load_data():
     """Load and merge the data files"""
-    availability_df = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
-    bios_df = pd.read_csv('BD_Caravel.csv')
-    
-    # Clean up and merge data
-    availability_df['Name'] = availability_df['What is your name?'].str.strip()
-    bios_df['Name'] = bios_df['First Name'].str.strip() + ' ' + bios_df['Last Name'].str.strip()
-    
-    return pd.merge(availability_df, bios_df, on='Name', how='inner')
+    try:
+        availability_df = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
+        bios_df = pd.read_csv('BD_Caravel.csv')
+        
+        # Clean up and merge data
+        availability_df['Name'] = availability_df['What is your name?'].str.strip()
+        bios_df['Name'] = bios_df['First Name'].str.strip() + ' ' + bios_df['Last Name'].str.strip()
+        
+        merged_df = pd.merge(availability_df, bios_df, on='Name', how='inner')
+        st.sidebar.write(f"Debug: Successfully loaded {len(merged_df)} lawyers")
+        return merged_df
+    except Exception as e:
+        st.error(f"Error loading data files: {str(e)}")
+        return None
 
-def format_lawyer_info(df):
-    """Format lawyer information in a clear, readable way"""
-    lawyers_info = []
+def prepare_lawyer_data(df):
+    """Prepare lawyer information for analysis"""
+    lawyer_info = []
     
     for _, row in df.iterrows():
-        # Only include lawyers who are available
-        if str(row.get('Do you have capacity to take on new work?', '')).lower() == 'yes':
-            lawyer = {
-                'name': row['Name'],
-                'availability': {
-                    'days_per_week': str(row.get('What is your capacity to take on new work for the forseeable future? Days per week', '')),
-                    'hours_per_month': str(row.get('What is your capacity to take on new work for the foreseeable future? Hours per month', '')),
-                    'notes': str(row.get('Do you have any comments or instructions you should let us know about that may impact your short/long-term availability? For instance, are you going on vacation (please provide exact dates)?', '')),
-                    'engagement_types': str(row.get('What type of engagement would you like to consider?', ''))
-                },
-                'expertise': {
-                    'level': str(row.get('Level/Title', '')),
-                    'call_year': str(row.get('Call', '')),
-                    'practice_areas': str(row.get('Area of Practise + Add Info', '')),
-                    'industry_experience': str(row.get('Industry Experience', '')),
-                    'previous_companies': str(row.get('Previous Companies/Firms', '')),
-                    'notable_experience': str(row.get('Notable Items/Personal Details', ''))
-                },
-                'location': str(row.get('Location', '')),
-                'languages': str(row.get('Languages', ''))
+        # Basic lawyer information
+        info = {
+            'name': row['Name'],
+            'level': row.get('Level/Title', ''),
+            'call_year': row.get('Call', ''),
+            'practice_areas': row.get('Area of Practise + Add Info', ''),
+            'industry_experience': row.get('Industry Experience', ''),
+            'location': row.get('Location', ''),
+            'availability': {
+                'status': row.get('Do you have capacity to take on new work?', ''),
+                'days_per_week': row.get('What is your capacity to take on new work for the forseeable future? Days per week', ''),
+                'hours_per_month': row.get('What is your capacity to take on new work for the foreseeable future? Hours per month', ''),
+                'notes': row.get('Do you have any comments or instructions you should let us know about that may impact your short/long-term availability? For instance, are you going on vacation (please provide exact dates)?', ''),
+                'engagement_types': row.get('What type of engagement would you like to consider?', '')
+            },
+            'experience': {
+                'previous_companies': row.get('Previous Companies/Firms', ''),
+                'notable_items': row.get('Notable Items/Personal Details', '')
             }
-            lawyers_info.append(lawyer)
+        }
+        
+        # Only include if they have some availability
+        if str(info['availability']['status']).lower() in ['yes', 'maybe']:
+            lawyer_info.append(info)
     
-    return lawyers_info
+    st.sidebar.write(f"Debug: Found {len(lawyer_info)} available lawyers")
+    return lawyer_info
 
-def get_claude_analysis(query, df):
-    """Have Claude analyze the entire dataset and recommend lawyers"""
+def get_claude_analysis(query, lawyer_data):
+    """Get Claude's analysis of the best lawyer matches"""
     
-    lawyers_info = format_lawyer_info(df)
-    
-    # Create a more readable format of the lawyers' information
-    lawyers_text = "\n\nAVAILABLE LAWYERS:\n"
-    for lawyer in lawyers_info:
-        lawyers_text += f"\n{lawyer['name']}:\n"
-        lawyers_text += f"- Level/Call Year: {lawyer['expertise']['level']} ({lawyer['expertise']['call_year']})\n"
-        lawyers_text += f"- Practice Areas: {lawyer['expertise']['practice_areas']}\n"
-        lawyers_text += f"- Industry Experience: {lawyer['expertise']['industry_experience']}\n"
-        lawyers_text += f"- Availability: {lawyer['availability']['days_per_week']} days/week, {lawyer['availability']['hours_per_month']}/month\n"
-        lawyers_text += f"- Preferred Engagement Types: {lawyer['availability']['engagement_types']}\n"
-        if lawyer['availability']['notes'] and lawyer['availability']['notes'].lower() not in ['n/a', 'na', 'none', 'no']:
-            lawyers_text += f"- Availability Notes: {lawyer['availability']['notes']}\n"
-        if lawyer['expertise']['notable_experience'] and lawyer['expertise']['notable_experience'].lower() not in ['n/a', 'na', 'none', 'no']:
-            lawyers_text += f"- Notable Experience: {lawyer['expertise']['notable_experience']}\n"
+    # Format lawyer information for prompt
+    lawyer_descriptions = []
+    for lawyer in lawyer_data:
+        desc = f"\nLAWYER: {lawyer['name']}\n"
+        desc += f"Level/Call Year: {lawyer['level']} ({lawyer['call_year']})\n"
+        desc += f"Practice Areas: {lawyer['practice_areas']}\n"
+        desc += f"Industry Experience: {lawyer['industry_experience']}\n"
+        desc += f"Location: {lawyer['location']}\n"
+        desc += "Availability:\n"
+        desc += f"- Days per week: {lawyer['availability']['days_per_week']}\n"
+        desc += f"- Hours per month: {lawyer['availability']['hours_per_month']}\n"
+        desc += f"- Engagement types: {lawyer['availability']['engagement_types']}\n"
+        if lawyer['availability']['notes']:
+            desc += f"- Notes: {lawyer['availability']['notes']}\n"
+        if lawyer['experience']['notable_items']:
+            desc += f"Notable Experience: {lawyer['experience']['notable_items']}\n"
+        lawyer_descriptions.append(desc)
 
-    prompt = f"""You are a knowledgeable legal staffing professional helping match lawyers to client needs. A client has the following need:
+    prompt = f"""You are assisting with finding the best lawyer match for a client's needs. Please analyze this request carefully and recommend the most suitable lawyers based on their expertise and availability.
 
+CLIENT NEED:
 {query}
 
-Based on the available lawyers' information below, please:
-1. Analyze which lawyers would be the best fit
-2. Explain your reasoning
-3. Provide between 2-5 clear recommendations, ranked in order of best fit
-4. For each recommended lawyer, include their specific availability details
+AVAILABLE LAWYERS:
+{''.join(lawyer_descriptions)}
 
-{lawyers_text}
+Please analyze this request as a legal staffing professional would, considering:
+1. Direct expertise match with the client's needs
+2. Relevant industry experience
+3. Availability and engagement type alignment
+4. Years of experience and seniority
+5. Location and practical considerations
 
-Please consider both expertise match and actual availability. Focus on finding the best practical matches for the client's needs.
-
-Format your response as:
+Provide your response in this format:
 
 ANALYSIS:
-[Your detailed analysis of the best matches]
+[A thoughtful analysis of why certain lawyers would be good matches, considering both expertise and practical factors]
 
-TOP RECOMMENDATIONS:
-1. [First choice with detailed rationale]
-2. [Second choice with detailed rationale]
-[Include up to 5 total recommendations, each with clear rationale]
+RECOMMENDED LAWYERS:
+[2-5 ranked recommendations, each with:
+- Name and key qualifications
+- Specific reasons they're a good match
+- Any important considerations about their availability]
 
 AVAILABILITY DETAILS:
-[List each recommended lawyer's specific availability, including:
-- Days per week available
-- Hours per month available
-- Any upcoming vacation or availability restrictions
-- Preferred engagement types]
+[Specific availability information for each recommended lawyer]
 
-ALTERNATIVE CONSIDERATIONS:
+ADDITIONAL SUGGESTIONS:
 [Any other lawyers worth considering and why]"""
 
     try:
         response = anthropic.messages.create(
             model="claude-3-sonnet-20240229",
-            max_tokens=1500,
+            max_tokens=2000,
             messages=[{
                 "role": "user",
                 "content": prompt
             }]
         )
-        
         return response.content[0].text
     except Exception as e:
-        st.error(f"Error getting Claude's analysis: {e}")
-        return "Error analyzing lawyers. Please try again."
+        st.error(f"Error getting recommendations: {str(e)}")
+        return None
 
 def main():
     st.title("Caravel Law Lawyer Matcher")
     
+    # Check for API key
     if not os.getenv('ANTHROPIC_API_KEY'):
         st.error("Please set the ANTHROPIC_API_KEY environment variable")
         return
     
-    try:
-        df = load_data()
-    except Exception as e:
-        st.error(f"Error loading data: {e}")
+    # Load data
+    df = load_data()
+    if df is None:
         return
-
-    # Initialize session state if needed
+        
+    # Initialize session state
     if 'query' not in st.session_state:
         st.session_state.query = ''
     if 'search_triggered' not in st.session_state:
@@ -140,64 +148,75 @@ def main():
 
     # Example queries
     st.write("### How can we help you find the right lawyer?")
-    st.write("Try asking something like:")
     examples = [
-        "I need a lawyer with trademark experience who can start work soon",
-        "Looking for someone with employment law experience to help with HR policies and contracts",
-        "Need a lawyer experienced with startups and financing",
-        "Who would be best for drafting and negotiating SaaS agreements?"
+        "I need a lawyer with trademark and IP experience who can start work soon",
+        "Looking for someone experienced in employment law to help with HR policies and contracts",
+        "Need a lawyer experienced with startups, financing, and corporate structure",
+        "Who would be best for drafting and negotiating SaaS agreements and technology contracts?"
     ]
     
-    # Create two columns for example queries
+    # Example query buttons in two columns
     col1, col2 = st.columns(2)
     for i, example in enumerate(examples):
-        button_key = f"example_{i}"
         if i % 2 == 0:
-            if col1.button(f"🔍 {example}", key=button_key):
+            if col1.button(f"🔍 {example}", key=f"example_{i}"):
                 st.session_state.query = example
                 st.session_state.search_triggered = True
         else:
-            if col2.button(f"🔍 {example}", key=button_key):
+            if col2.button(f"🔍 {example}", key=f"example_{i}"):
                 st.session_state.query = example
                 st.session_state.search_triggered = True
 
     # Custom query input
+    st.write("\n### Or describe your specific needs:")
     query = st.text_area(
-        "Or describe what you're looking for:",
+        "",
         value=st.session_state.query,
-        help="Be as specific as you can about your needs"
+        help="Be specific about your legal needs, industry context, and any timing requirements",
+        placeholder="E.g., I need a lawyer experienced in technology licensing and privacy law for a SaaS company..."
     )
 
+    # Search and Clear buttons
     col1, col2 = st.columns([1, 4])
-    if col1.button("Find Lawyers"):
-        st.session_state.query = query
-        st.session_state.search_triggered = True
-    
-    if col2.button("Clear and Start Over"):
+    search = col1.button("Find Lawyers")
+    clear = col2.button("Clear and Start Over")
+
+    if clear:
         st.session_state.query = ''
         st.session_state.search_triggered = False
         st.rerun()
 
-    # Perform search when triggered
+    if search:
+        st.session_state.query = query
+        st.session_state.search_triggered = True
+
+    # Process search
     if st.session_state.search_triggered and st.session_state.query:
-        with st.spinner("Analyzing available lawyers..."):
-            analysis = get_claude_analysis(st.session_state.query, df)
+        lawyer_data = prepare_lawyer_data(df)
         
-        # Display the analysis in a clean format
-        sections = analysis.split('\n\n')
-        for section in sections:
-            if section.startswith('ANALYSIS:'):
-                with st.expander("Detailed Analysis", expanded=True):
-                    st.write(section.replace('ANALYSIS:', '').strip())
-            elif section.startswith('TOP RECOMMENDATIONS:'):
-                st.write("### Top Recommendations")
-                st.write(section.replace('TOP RECOMMENDATIONS:', '').strip())
-            elif section.startswith('AVAILABILITY DETAILS:'):
-                with st.expander("Availability Details for Recommended Lawyers", expanded=True):
-                    st.write(section.replace('AVAILABILITY DETAILS:', '').strip())
-            elif section.startswith('ALTERNATIVE CONSIDERATIONS:'):
-                with st.expander("Alternative Options"):
-                    st.write(section.replace('ALTERNATIVE CONSIDERATIONS:', '').strip())
+        if not lawyer_data:
+            st.error("No available lawyers found in the database.")
+            return
+            
+        with st.spinner("Analyzing available lawyers..."):
+            analysis = get_claude_analysis(st.session_state.query, lawyer_data)
+        
+        if analysis:
+            # Display results in a clean format
+            sections = analysis.split('\n\n')
+            for section in sections:
+                if section.startswith('ANALYSIS:'):
+                    with st.expander("Detailed Analysis", expanded=True):
+                        st.write(section.replace('ANALYSIS:', '').strip())
+                elif section.startswith('RECOMMENDED LAWYERS:'):
+                    st.write("### Recommended Lawyers")
+                    st.write(section.replace('RECOMMENDED LAWYERS:', '').strip())
+                elif section.startswith('AVAILABILITY DETAILS:'):
+                    with st.expander("Availability Information", expanded=True):
+                        st.write(section.replace('AVAILABILITY DETAILS:', '').strip())
+                elif section.startswith('ADDITIONAL SUGGESTIONS:'):
+                    with st.expander("Additional Options"):
+                        st.write(section.replace('ADDITIONAL SUGGESTIONS:', '').strip())
     elif not st.session_state.query:
         st.info("Please enter your requirements or select an example query.")
 
