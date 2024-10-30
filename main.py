@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from anthropic import Anthropic
 from dotenv import load_dotenv
-import json
 import os
 
 # Load environment variables
@@ -34,7 +33,8 @@ def format_lawyer_info(df):
                 'availability': {
                     'days_per_week': str(row.get('What is your capacity to take on new work for the forseeable future? Days per week', '')),
                     'hours_per_month': str(row.get('What is your capacity to take on new work for the foreseeable future? Hours per month', '')),
-                    'notes': str(row.get('Do you have any comments or instructions you should let us know about that may impact your short/long-term availability? For instance, are you going on vacation (please provide exact dates)?', ''))
+                    'notes': str(row.get('Do you have any comments or instructions you should let us know about that may impact your short/long-term availability? For instance, are you going on vacation (please provide exact dates)?', '')),
+                    'engagement_types': str(row.get('What type of engagement would you like to consider?', ''))
                 },
                 'expertise': {
                     'level': str(row.get('Level/Title', '')),
@@ -64,6 +64,7 @@ def get_claude_analysis(query, df):
         lawyers_text += f"- Practice Areas: {lawyer['expertise']['practice_areas']}\n"
         lawyers_text += f"- Industry Experience: {lawyer['expertise']['industry_experience']}\n"
         lawyers_text += f"- Availability: {lawyer['availability']['days_per_week']} days/week, {lawyer['availability']['hours_per_month']}/month\n"
+        lawyers_text += f"- Preferred Engagement Types: {lawyer['availability']['engagement_types']}\n"
         if lawyer['availability']['notes'] and lawyer['availability']['notes'].lower() not in ['n/a', 'na', 'none', 'no']:
             lawyers_text += f"- Availability Notes: {lawyer['availability']['notes']}\n"
         if lawyer['expertise']['notable_experience'] and lawyer['expertise']['notable_experience'].lower() not in ['n/a', 'na', 'none', 'no']:
@@ -76,8 +77,8 @@ def get_claude_analysis(query, df):
 Based on the available lawyers' information below, please:
 1. Analyze which lawyers would be the best fit
 2. Explain your reasoning
-3. Provide clear recommendations
-4. Suggest alternatives if relevant
+3. Provide between 2-5 clear recommendations, ranked in order of best fit
+4. For each recommended lawyer, include their specific availability details
 
 {lawyers_text}
 
@@ -89,15 +90,19 @@ ANALYSIS:
 [Your detailed analysis of the best matches]
 
 TOP RECOMMENDATIONS:
-1. [Primary recommendation with clear rationale]
-2. [Secondary recommendation if applicable]
-3. [Third option if applicable]
+1. [First choice with detailed rationale]
+2. [Second choice with detailed rationale]
+[Include up to 5 total recommendations, each with clear rationale]
+
+AVAILABILITY DETAILS:
+[List each recommended lawyer's specific availability, including:
+- Days per week available
+- Hours per month available
+- Any upcoming vacation or availability restrictions
+- Preferred engagement types]
 
 ALTERNATIVE CONSIDERATIONS:
-[Any other lawyers worth considering and why]
-
-AVAILABILITY NOTES:
-[Any important notes about the recommended lawyers' availability]"""
+[Any other lawyers worth considering and why]"""
 
     try:
         response = anthropic.messages.create(
@@ -130,6 +135,8 @@ def main():
     # Initialize session state if needed
     if 'query' not in st.session_state:
         st.session_state.query = ''
+    if 'search_triggered' not in st.session_state:
+        st.session_state.search_triggered = False
 
     # Example queries
     st.write("### How can we help you find the right lawyer?")
@@ -144,14 +151,15 @@ def main():
     # Create two columns for example queries
     col1, col2 = st.columns(2)
     for i, example in enumerate(examples):
+        button_key = f"example_{i}"
         if i % 2 == 0:
-            if col1.button(f"🔍 {example}"):
+            if col1.button(f"🔍 {example}", key=button_key):
                 st.session_state.query = example
-                st.rerun()
+                st.session_state.search_triggered = True
         else:
-            if col2.button(f"🔍 {example}"):
+            if col2.button(f"🔍 {example}", key=button_key):
                 st.session_state.query = example
-                st.rerun()
+                st.session_state.search_triggered = True
 
     # Custom query input
     query = st.text_area(
@@ -161,18 +169,17 @@ def main():
     )
 
     col1, col2 = st.columns([1, 4])
-    search = col1.button("Find Lawyers")
-    clear = col2.button("Clear and Start Over")
-
-    if clear:
-        st.session_state.query = ''
-        st.rerun()
-
-    if search:
+    if col1.button("Find Lawyers"):
         st.session_state.query = query
+        st.session_state.search_triggered = True
+    
+    if col2.button("Clear and Start Over"):
+        st.session_state.query = ''
+        st.session_state.search_triggered = False
         st.rerun()
 
-    if st.session_state.query:
+    # Perform search when triggered
+    if st.session_state.search_triggered and st.session_state.query:
         with st.spinner("Analyzing available lawyers..."):
             analysis = get_claude_analysis(st.session_state.query, df)
         
@@ -185,13 +192,13 @@ def main():
             elif section.startswith('TOP RECOMMENDATIONS:'):
                 st.write("### Top Recommendations")
                 st.write(section.replace('TOP RECOMMENDATIONS:', '').strip())
+            elif section.startswith('AVAILABILITY DETAILS:'):
+                with st.expander("Availability Details for Recommended Lawyers", expanded=True):
+                    st.write(section.replace('AVAILABILITY DETAILS:', '').strip())
             elif section.startswith('ALTERNATIVE CONSIDERATIONS:'):
                 with st.expander("Alternative Options"):
                     st.write(section.replace('ALTERNATIVE CONSIDERATIONS:', '').strip())
-            elif section.startswith('AVAILABILITY NOTES:'):
-                with st.expander("Availability Information"):
-                    st.write(section.replace('AVAILABILITY NOTES:', '').strip())
-    elif not st.session_state.query and not clear:
+    elif not st.session_state.query:
         st.info("Please enter your requirements or select an example query.")
 
 if __name__ == "__main__":
