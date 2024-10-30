@@ -5,115 +5,120 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 import os
 import re
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 import time
 from typing import List, Dict
+import torch
 
 # Load environment variables
 load_dotenv()
 
-def retry_with_exponential_backoff(func):
-    """Decorator for retrying functions with exponential backoff"""
-    def wrapper(*args, **kwargs):
-        max_retries = 5
-        retry_delay = 1  # Initial delay in seconds
-        
-        for retry in range(max_retries):
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                if "rate_limit_error" in str(e):
-                    if retry < max_retries - 1:
-                        delay = retry_delay * (2 ** retry)  # Exponential backoff
-                        st.warning(f"Rate limit reached. Waiting {delay} seconds before retry...")
-                        time.sleep(delay)
-                        continue
-                raise e
-    return wrapper
-
 class LawyerMatcher:
     def __init__(self):
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        try:
+            from sentence_transformers import SentenceTransformer
+            self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        except Exception as e:
+            st.error(f"Error initializing SentenceTransformer: {str(e)}")
+            self.model = None
         self.availability_df = None
         self.bios_df = None
         self.lawyer_embeddings = None
         
     def load_data(self, availability_path: str, bios_path: str):
         """Load and prepare lawyer data"""
-        self.availability_df = pd.read_csv(availability_path)
-        self.bios_df = pd.read_csv(bios_path)
-        
-        # Create combined text for each lawyer
-        self.bios_df['combined_text'] = self.bios_df.apply(
-            lambda row: ' '.join(str(val) for val in row if pd.notna(val)), 
-            axis=1
-        )
-        
-        # Generate embeddings for all lawyer bios
-        self.lawyer_embeddings = self.model.encode(
-            self.bios_df['combined_text'].tolist(), 
-            show_progress_bar=True
-        )
+        try:
+            self.availability_df = pd.read_csv(availability_path)
+            self.bios_df = pd.read_csv(bios_path, delimiter='\t')  # Using tab delimiter for BD_Caravel.csv
+            
+            # Create full name column in bios_df
+            self.bios_df['full_name'] = self.bios_df['First Name'] + ' ' + self.bios_df['Last Name']
+            
+            # Create combined text for each lawyer's bio
+            relevant_columns = [
+                'Level/Title', 'Call', 'Jurisdiction', 'Location', 
+                'Area of Practise + Add Info', 'Industry Experience', 
+                'Languages', 'Previous In-House Companies', 
+                'Previous Companies/Firms', 'Education', 
+                'Awards/Recognition', 'Notable Items/Personal Details'
+            ]
+            
+            self.bios_df['combined_text'] = self.bios_df.apply(
+                lambda row: ' '.join(str(val) for col in relevant_columns 
+                                   if col in row.index and pd.notna(row[col]) 
+                                   for val in str(row[col]).split(';')), 
+                axis=1
+            )
+            
+            # Generate embeddings for all lawyer bios if model is available
+            if self.model is not None:
+                self.lawyer_embeddings = self.model.encode(
+                    self.bios_df['combined_text'].tolist(), 
+                    show_progress_bar=True
+                )
+            else:
+                st.warning("SentenceTransformer model not available. Falling back to basic text matching.")
+                
+        except Exception as e:
+            st.error(f"Error loading data: {str(e)}")
+            raise
 
     def rank_lawyers(self, query: str) -> pd.DataFrame:
         """Rank lawyers by relevance to query"""
-        query_embedding = self.model.encode([query])
-        similarities = cosine_similarity(query_embedding, self.lawyer_embeddings)[0]
-        self.bios_df['relevance_score'] = similarities
+        if self.model is not None and self.lawyer_embeddings is not None:
+            query_embedding = self.model.encode([query])
+            from sklearn.metrics.pairwise import cosine_similarity
+            similarities = cosine_similarity(query_embedding, self.lawyer_embeddings)[0]
+            self.bios_df['relevance_score'] = similarities
+        else:
+            # Fallback to basic text matching
+            self.bios_df['relevance_score'] = self.bios_df['combined_text'].apply(
+                lambda x: sum(q.lower() in x.lower() for q in query.split())
+            )
         return self.bios_df.sort_values('relevance_score', ascending=False)
 
 def chunk_data(bios_df: pd.DataFrame, availability_df: pd.DataFrame, chunk_size: int = 5) -> List[Dict[str, pd.DataFrame]]:
     """Split data into smaller chunks"""
     chunks = []
     
-    # Sort both dataframes by the same lawyer names to maintain alignment
-    lawyer_names = bios_df['What is your name?'].tolist()
-    availability_df = availability_df[availability_df['What is your name?'].isin(lawyer_names)]
-    
-    # Create chunks
-    for i in range(0, len(bios_df), chunk_size):
-        chunk_bios = bios_df.iloc[i:i + chunk_size]
-        chunk_lawyers = chunk_bios['What is your name?'].tolist()
-        chunk_availability = availability_df[availability_df['What is your name?'].isin(chunk_lawyers)]
+    try:
+        # Get common lawyer names between both dataframes using full name
+        bios_full_names = bios_df['full_name'].tolist()
+        availability_names = availability_df['What is your name?'].tolist()
         
-        chunks.append({
-            'bios': chunk_bios,
-            'availability': chunk_availability
-        })
-    
-    return chunks
-
-@retry_with_exponential_backoff
-def process_chunk(query: str, chunk: Dict[str, pd.DataFrame]) -> str:
-    """Process a single chunk of data with Claude"""
-    anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
-    
-    prompt = f"""I have information about a subset of lawyers. Please analyze if any match this need:
-
-{query}
-
-Availability information:
-{chunk['availability'].to_string()}
-
-Lawyer bios and expertise:
-{chunk['bios'].to_string()}
-
-Please recommend any lawyers from this group that clearly match the need. If none have the specific expertise required, please say so directly. Be honest - only recommend lawyers if you see clear evidence they have the relevant experience.
-
-If recommending lawyers, please format their names clearly with numbers like:
-1. [Lawyer Name]: [Explanation]
-2. [Lawyer Name]: [Explanation]"""
-
-    response = anthropic.messages.create(
-        model="claude-3-sonnet-20240229",
-        max_tokens=1000,
-        messages=[{
-            "role": "user",
-            "content": prompt
-        }]
-    )
-    return response.content[0].text
+        # Create a mapping of standardized names
+        def standardize_name(name):
+            return ' '.join(sorted(name.lower().split()))
+        
+        bios_std_names = {standardize_name(name): name for name in bios_full_names}
+        avail_std_names = {standardize_name(name): name for name in availability_names}
+        
+        # Find common lawyers
+        common_std_names = set(bios_std_names.keys()) & set(avail_std_names.keys())
+        
+        if not common_std_names:
+            raise ValueError("No matching lawyers found between bios and availability data")
+        
+        # Filter dataframes to only include common lawyers
+        bios_df = bios_df[bios_df['full_name'].apply(standardize_name).isin(common_std_names)]
+        availability_df = availability_df[availability_df['What is your name?'].apply(standardize_name).isin(common_std_names)]
+        
+        # Create chunks
+        for i in range(0, len(bios_df), chunk_size):
+            chunk_bios = bios_df.iloc[i:i + chunk_size]
+            chunk_lawyers = chunk_bios['full_name'].apply(standardize_name).tolist()
+            chunk_availability = availability_df[
+                availability_df['What is your name?'].apply(standardize_name).isin(chunk_lawyers)
+            ]
+            
+            chunks.append({
+                'bios': chunk_bios,
+                'availability': chunk_availability
+            })
+        
+        return chunks
+    except Exception as e:
+        st.error(f"Error chunking data: {str(e)}")
+        return []
 
 def extract_recommended_lawyers(analysis_text: str, availability_df: pd.DataFrame) -> List[Dict]:
     """Extract recommended lawyer names and their availability info"""
@@ -123,16 +128,23 @@ def extract_recommended_lawyers(analysis_text: str, availability_df: pd.DataFram
     
     for name in matches:
         name = name.strip()
-        lawyer_info = availability_df[availability_df['What is your name?'].str.contains(name, case=False, na=False)]
+        # Try to find the lawyer by standardized name
+        std_name = ' '.join(sorted(name.lower().split()))
+        lawyer_info = availability_df[
+            availability_df['What is your name?'].apply(lambda x: ' '.join(sorted(x.lower().split()))) == std_name
+        ]
+        
         if not lawyer_info.empty:
-            lawyer = {
-                'name': name,
-                'days_available': lawyer_info['What is your capacity to take on new work for the forseeable future? Days per week'].iloc[0],
-                'hours_available': lawyer_info['What is your capacity to take on new work for the foreseeable future? Hours per month'].iloc[0],
-                'engagement_types': lawyer_info['What type of engagement would you like to consider?'].iloc[0],
-                'availability_notes': lawyer_info['Do you have any comments or instructions you should let us know about that may impact your short/long-term availability? For instance, are you going on vacation (please provide exact dates)?'].iloc[0]
-            }
-            recommended_lawyers.append(lawyer)
+            try:
+                lawyer = {
+                    'name': name,
+                    'days_available': lawyer_info['Daily/Fractional Engagements'].iloc[0],
+                    'hours_available': lawyer_info['Monthly Engagements (hours per month)'].iloc[0],
+                    'upcoming_vacation': lawyer_info['Upcoming Vacation'].iloc[0] if 'Upcoming Vacation' in lawyer_info.columns else 'Not specified'
+                }
+                recommended_lawyers.append(lawyer)
+            except Exception as e:
+                st.warning(f"Error extracting availability info for {name}: {str(e)}")
     
     return recommended_lawyers
 
@@ -149,7 +161,7 @@ def main():
             )
             st.session_state.matcher = matcher
         except Exception as e:
-            st.error(f"Error loading data files: {str(e)}")
+            st.error(f"Error initializing application: {str(e)}")
             return
 
     # Example queries
@@ -196,13 +208,9 @@ def main():
     # Process search
     if st.session_state.get('query'):
         with st.spinner("Finding the best matches..."):
-            # Rank lawyers by relevance
             ranked_bios = st.session_state.matcher.rank_lawyers(st.session_state.query)
-            
-            # Split data into chunks
             chunks = chunk_data(ranked_bios, st.session_state.matcher.availability_df)
             
-            # Process each chunk
             all_analyses = []
             progress_bar = st.progress(0)
             
@@ -212,14 +220,10 @@ def main():
                     all_analyses.append(chunk_analysis)
                 progress_bar.progress((i + 1) / len(chunks))
             
-            # Combine results
             if all_analyses:
                 analysis = "\n\n".join(all_analyses)
-                
-                # Display Claude's analysis
                 st.write(analysis)
                 
-                # Extract and show availability for recommended lawyers
                 recommended_lawyers = extract_recommended_lawyers(
                     analysis, 
                     st.session_state.matcher.availability_df
@@ -229,14 +233,14 @@ def main():
                     st.write("\n### Availability Details")
                     for lawyer in recommended_lawyers:
                         with st.expander(f"📅 {lawyer['name']}'s Availability"):
-                            st.write("**Days per Week:**", lawyer['days_available'])
-                            st.write("**Hours per Month:**", lawyer['hours_available'])
-                            if lawyer['engagement_types'] and str(lawyer['engagement_types']).lower() not in ['n/a', 'na', 'none', 'no']:
-                                st.write("**Preferred Engagement Types:**", lawyer['engagement_types'])
-                            if lawyer['availability_notes'] and str(lawyer['availability_notes']).lower() not in ['n/a', 'na', 'none', 'no']:
-                                st.write("**Availability Notes:**", lawyer['availability_notes'])
-            else:
-                st.warning("No matching lawyers found.")
+                            if pd.notna(lawyer['days_available']):
+                                st.write("**Days Available:**", lawyer['days_available'])
+                            if pd.notna(lawyer['hours_available']):
+                                st.write("**Hours per Month:**", lawyer['hours_available'])
+                            if pd.notna(lawyer['upcoming_vacation']) and str(lawyer['upcoming_vacation']).lower() not in ['n/a', 'na', 'none', 'no']:
+                                st.write("**Upcoming Vacation:**", lawyer['upcoming_vacation'])
+                else:
+                    st.warning("No matching lawyers found.")
 
 if __name__ == "__main__":
     main()
