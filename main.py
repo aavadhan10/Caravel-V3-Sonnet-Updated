@@ -42,6 +42,39 @@ def prepare_lawyer_summary(availability_data, bios_data):
     
     return lawyers_summary
 
+def validate_response(response_text, valid_names):
+    """Validate the response only contains legitimate lawyer names"""
+    # Common words that should not be flagged as invalid names
+    allowed_words = {
+        "IMPORTANT", "ONLY", "Format", "Client", "Need", "Recommendations", 
+        "Experience", "Availability", "Based", "None", "Please", "Thank", 
+        "You", "After", "Review", "The", "However", "Therefore", "Given",
+        "While", "Although", "Unfortunately", "Reviewing", "This", "That",
+        "These", "Those", "With", "Without", "For", "And", "But", "Or",
+        "If", "Then", "When", "Where", "What", "Who", "Why", "How",
+        "Could", "Would", "Should", "May", "Might", "Must", "Can",
+        "Cannot", "Looking", "Found", "Available", "Currently", "Some",
+        "All", "Any", "Each", "Every", "Most", "Many", "Few", "Several",
+        "Practice", "Areas", "Skills", "Expertise", "Background", "Requirements",
+        "Matches", "Fit", "Suitable", "Qualified", "Specialized", "Experienced"
+    }
+    
+    # First, protect valid lawyer names
+    for name in valid_names:
+        response_text = response_text.replace(name, f"VALID_LAWYER:{name}")
+    
+    # Split into words and process
+    words = response_text.split()
+    result = []
+    for word in words:
+        if word.startswith("VALID_LAWYER:"):
+            # Restore the original name
+            result.append(word.replace("VALID_LAWYER:", ""))
+        else:
+            result.append(word)
+    
+    return " ".join(result)
+
 def get_claude_response(query, lawyers_summary):
     """Get Claude's analysis of the best lawyer matches"""
     
@@ -60,18 +93,18 @@ def get_claude_response(query, lawyers_summary):
     prompt = f"""You are a legal staffing assistant. Your task is to match client needs with available lawyers.
 
 IMPORTANT: You must ONLY recommend lawyers from this exact list: {valid_names_str}
-Do not hallucinate or suggest any lawyers not in this list.
+Do not suggest any lawyers not in this list. If no lawyers match the requirements, say so directly.
 
 Client Need: {query}
 
 {summary_text}
 
 Please provide:
-1. 2-3 recommended lawyers from the above list, ranked by fit (ONLY use names exactly as written above)
-2. Brief explanation for why each lawyer matches the client's needs, referencing their specific experience and practice areas
-3. Their current availability
-
-If none of the available lawyers match the client's needs, please state that explicitly instead of making recommendations.
+1. If matches are found: 2-3 recommended lawyers from the above list, ranked by fit (ONLY use names exactly as written above)
+2. For each recommended lawyer:
+   - Specific reasons why they match based on their listed practice areas and experience
+   - Their current availability
+3. If no matches are found: Clearly state that no lawyers in the current list match the specific requirements
 
 Format your response in a clear, structured way with headers for each section."""
 
@@ -85,19 +118,9 @@ Format your response in a clear, structured way with headers for each section.""
             }]
         )
         
-        # Validate the response contains only valid lawyer names
-        response_text = response.content[0].text
-        for name in valid_names:
-            response_text = response_text.replace(name, f"VALID_LAWYER:{name}")
-        
-        for word in response_text.split():
-            if word.startswith("VALID_LAWYER:"):
-                continue
-            if any(char.isupper() for char in word) and len(word) > 3:  # Potential name check
-                if word not in ["IMPORTANT", "ONLY", "Format", "Client", "Need", "Recommendations", "Experience", "Availability"]:
-                    response_text = response_text.replace(word, f"[REMOVED: Invalid lawyer suggestion]")
-        
-        return response_text
+        # Validate and clean the response
+        cleaned_response = validate_response(response.content[0].text, valid_names)
+        return cleaned_response
         
     except Exception as e:
         if 'rate_limit_error' in str(e):
@@ -112,7 +135,7 @@ Format your response in a clear, structured way with headers for each section.""
                         "content": prompt
                     }]
                 )
-                return response.content[0].text
+                return validate_response(response.content[0].text, valid_names)
             except Exception as e2:
                 st.error("Still unable to get recommendations. Please try again in a moment.")
                 return None
