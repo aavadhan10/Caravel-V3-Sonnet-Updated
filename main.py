@@ -4,6 +4,11 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 import os
 import time
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -13,6 +18,10 @@ anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
 def prepare_lawyer_summary(availability_data, bios_data):
     """Create a concise summary of lawyer information"""
+    # Log the initial data
+    logger.info(f"Number of lawyers in availability data: {len(availability_data)}")
+    logger.info(f"Number of lawyers in bios data: {len(bios_data)}")
+    
     # Merge the dataframes
     availability_data['Name'] = availability_data['What is your name?'].str.strip()
     bios_data['Name'] = bios_data['First Name'].str.strip() + ' ' + bios_data['Last Name'].str.strip()
@@ -24,17 +33,27 @@ def prepare_lawyer_summary(availability_data, bios_data):
         availability_data['Do you have capacity to take on new work?'].str.lower().isin(['yes', 'maybe'])
     ]
     
+    logger.info(f"Number of available lawyers: {len(available_lawyers)}")
+    
     for _, row in available_lawyers.iterrows():
         name = row['Name']
         bio_row = bios_data[bios_data['Name'] == name]
         
         if not bio_row.empty:
             bio_row = bio_row.iloc[0]
+            practice_areas = bio_row.get('Area of Practise + Add Info', '').strip()
+            experience = bio_row.get('Industry Experience', '').strip()
+            
+            # Log each lawyer's info for debugging
+            logger.info(f"\nLawyer: {name}")
+            logger.info(f"Practice Areas: {practice_areas}")
+            logger.info(f"Experience: {experience}")
+            
             summary = {
                 'name': name,
                 'availability': row['What is your capacity to take on new work?'],
-                'practice_areas': bio_row.get('Area of Practise + Add Info', ''),
-                'experience': bio_row.get('Industry Experience', ''),
+                'practice_areas': practice_areas,
+                'experience': experience,
                 'days_available': row.get('What is your capacity to take on new work for the forseeable future? Days per week', ''),
                 'hours_available': row.get('What is your capacity to take on new work for the foreseeable future? Hours per month', '')
             }
@@ -42,49 +61,38 @@ def prepare_lawyer_summary(availability_data, bios_data):
     
     return lawyers_summary
 
-def validate_response(response_text, valid_names):
-    """Validate the response only contains legitimate lawyer names"""
-    # Common words that should not be flagged as invalid names
-    allowed_words = {
-        "IMPORTANT", "ONLY", "Format", "Client", "Need", "Recommendations", 
-        "Experience", "Availability", "Based", "None", "Please", "Thank", 
-        "You", "After", "Review", "The", "However", "Therefore", "Given",
-        "While", "Although", "Unfortunately", "Reviewing", "This", "That",
-        "These", "Those", "With", "Without", "For", "And", "But", "Or",
-        "If", "Then", "When", "Where", "What", "Who", "Why", "How",
-        "Could", "Would", "Should", "May", "Might", "Must", "Can",
-        "Cannot", "Looking", "Found", "Available", "Currently", "Some",
-        "All", "Any", "Each", "Every", "Most", "Many", "Few", "Several",
-        "Practice", "Areas", "Skills", "Expertise", "Background", "Requirements",
-        "Matches", "Fit", "Suitable", "Qualified", "Specialized", "Experienced"
-    }
+def format_practice_areas(practice_areas):
+    """Format practice areas into a bulleted list"""
+    if not practice_areas:
+        return "Not specified"
     
-    # First, protect valid lawyer names
-    for name in valid_names:
-        response_text = response_text.replace(name, f"VALID_LAWYER:{name}")
+    # Split on common delimiters and clean up
+    areas = [area.strip() for area in practice_areas.replace(';', ',').split(',')]
+    areas = [area for area in areas if area]
     
-    # Split into words and process
-    words = response_text.split()
-    result = []
-    for word in words:
-        if word.startswith("VALID_LAWYER:"):
-            # Restore the original name
-            result.append(word.replace("VALID_LAWYER:", ""))
-        else:
-            result.append(word)
+    if not areas:
+        return "Not specified"
     
-    return " ".join(result)
+    return "\n      • " + "\n      • ".join(areas)
 
 def get_claude_response(query, lawyers_summary):
     """Get Claude's analysis of the best lawyer matches"""
     
-    # Create a numbered list of available lawyers
+    # Debug: Print total number of lawyers being processed
+    logger.info(f"Processing {len(lawyers_summary)} lawyers for matching")
+    
+    # Create a numbered list of available lawyers with better formatting
     summary_text = "Here are the ONLY lawyers you can choose from:\n"
     for i, lawyer in enumerate(lawyers_summary, 1):
         summary_text += f"\n{i}. {lawyer['name']}:"
-        summary_text += f"\n   - Practice Areas: {lawyer['practice_areas']}"
-        summary_text += f"\n   - Experience: {lawyer['experience']}"
-        summary_text += f"\n   - Availability: {lawyer['days_available']} days/week, {lawyer['hours_available']}/month"
+        summary_text += f"\n   Practice Areas: {format_practice_areas(lawyer['practice_areas'])}"
+        if lawyer['experience']:
+            summary_text += f"\n   Industry Experience: {lawyer['experience']}"
+        summary_text += f"\n   Availability: {lawyer['days_available']} days/week, {lawyer['hours_available']}/month\n"
+    
+    # Log the formatted summary for debugging
+    logger.info("\nFormatted Lawyer Summary:")
+    logger.info(summary_text)
     
     # Create a list of valid lawyer names for validation
     valid_names = [lawyer['name'] for lawyer in lawyers_summary]
@@ -99,16 +107,24 @@ Client Need: {query}
 
 {summary_text}
 
-Please provide:
-1. If matches are found: 2-3 recommended lawyers from the above list, ranked by fit (ONLY use names exactly as written above)
-2. For each recommended lawyer:
-   - Specific reasons why they match based on their listed practice areas and experience
-   - Their current availability
-3. If no matches are found: Clearly state that no lawyers in the current list match the specific requirements
+Instructions:
+1. Carefully review each lawyer's practice areas and experience
+2. Look for specific mentions of expertise related to the client's needs
+3. If matches are found:
+   - Recommend 2-3 lawyers from the above list, ranked by fit
+   - For each recommendation, cite specific practice areas or experience that match the client's needs
+   - Include their availability details
+4. If no matches are found:
+   - Clearly state that no lawyers in the current list have the required expertise
+   - Be specific about what expertise was looked for but not found
 
-Format your response in a clear, structured way with headers for each section."""
+Remember: Only recommend lawyers if their listed practice areas or experience explicitly match the client's needs."""
 
     try:
+        # Log the prompt for debugging
+        logger.info("\nSending prompt to Claude:")
+        logger.info(prompt)
+        
         response = anthropic.messages.create(
             model="claude-3-sonnet-20240229",
             max_tokens=1000,
@@ -118,9 +134,11 @@ Format your response in a clear, structured way with headers for each section.""
             }]
         )
         
-        # Validate and clean the response
-        cleaned_response = validate_response(response.content[0].text, valid_names)
-        return cleaned_response
+        # Log Claude's response for debugging
+        logger.info("\nClaude's response:")
+        logger.info(response.content[0].text)
+        
+        return response.content[0].text
         
     except Exception as e:
         if 'rate_limit_error' in str(e):
@@ -135,7 +153,7 @@ Format your response in a clear, structured way with headers for each section.""
                         "content": prompt
                     }]
                 )
-                return validate_response(response.content[0].text, valid_names)
+                return response.content[0].text
             except Exception as e2:
                 st.error("Still unable to get recommendations. Please try again in a moment.")
                 return None
@@ -149,6 +167,14 @@ def main():
         # Load the data files
         availability_data = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
         bios_data = pd.read_csv('BD_Caravel.csv')
+        
+        # Add debug output to see data structure
+        if st.checkbox("Show Debug Info"):
+            st.write("### Data Preview")
+            st.write("Availability Data Columns:", availability_data.columns.tolist())
+            st.write("Bios Data Columns:", bios_data.columns.tolist())
+            st.write("\nSample Bio Data:")
+            st.write(bios_data[['First Name', 'Last Name', 'Area of Practise + Add Info', 'Industry Experience']].head())
         
         # Prepare summary once at startup
         lawyers_summary = prepare_lawyer_summary(availability_data, bios_data)
