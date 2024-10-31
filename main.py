@@ -45,24 +45,35 @@ def prepare_lawyer_summary(availability_data, bios_data):
 def get_claude_response(query, lawyers_summary):
     """Get Claude's analysis of the best lawyer matches"""
     
-    # Create a concise summary text
-    summary_text = "Available Lawyers:\n"
-    for lawyer in lawyers_summary:
-        summary_text += f"\n{lawyer['name']}:"
-        summary_text += f"\n- Practice Areas: {lawyer['practice_areas']}"
-        summary_text += f"\n- Experience: {lawyer['experience']}"
-        summary_text += f"\n- Availability: {lawyer['days_available']} days/week, {lawyer['hours_available']}/month"
+    # Create a numbered list of available lawyers
+    summary_text = "Here are the ONLY lawyers you can choose from:\n"
+    for i, lawyer in enumerate(lawyers_summary, 1):
+        summary_text += f"\n{i}. {lawyer['name']}:"
+        summary_text += f"\n   - Practice Areas: {lawyer['practice_areas']}"
+        summary_text += f"\n   - Experience: {lawyer['experience']}"
+        summary_text += f"\n   - Availability: {lawyer['days_available']} days/week, {lawyer['hours_available']}/month"
     
-    prompt = f"""Based on the following lawyer profiles, recommend 3-5 best matches for this client need:
+    # Create a list of valid lawyer names for validation
+    valid_names = [lawyer['name'] for lawyer in lawyers_summary]
+    valid_names_str = ", ".join(valid_names)
+    
+    prompt = f"""You are a legal staffing assistant. Your task is to match client needs with available lawyers.
+
+IMPORTANT: You must ONLY recommend lawyers from this exact list: {valid_names_str}
+Do not hallucinate or suggest any lawyers not in this list.
 
 Client Need: {query}
 
 {summary_text}
 
 Please provide:
-1. 3-5 recommended lawyers ranked by fit
-2. Brief explanation for each recommendation
-3. Their availability details"""
+1. 2-3 recommended lawyers from the above list, ranked by fit (ONLY use names exactly as written above)
+2. Brief explanation for why each lawyer matches the client's needs, referencing their specific experience and practice areas
+3. Their current availability
+
+If none of the available lawyers match the client's needs, please state that explicitly instead of making recommendations.
+
+Format your response in a clear, structured way with headers for each section."""
 
     try:
         response = anthropic.messages.create(
@@ -73,11 +84,25 @@ Please provide:
                 "content": prompt
             }]
         )
-        return response.content[0].text
+        
+        # Validate the response contains only valid lawyer names
+        response_text = response.content[0].text
+        for name in valid_names:
+            response_text = response_text.replace(name, f"VALID_LAWYER:{name}")
+        
+        for word in response_text.split():
+            if word.startswith("VALID_LAWYER:"):
+                continue
+            if any(char.isupper() for char in word) and len(word) > 3:  # Potential name check
+                if word not in ["IMPORTANT", "ONLY", "Format", "Client", "Need", "Recommendations", "Experience", "Availability"]:
+                    response_text = response_text.replace(word, f"[REMOVED: Invalid lawyer suggestion]")
+        
+        return response_text
+        
     except Exception as e:
         if 'rate_limit_error' in str(e):
             st.warning("Rate limit reached. Waiting a moment before trying again...")
-            time.sleep(5)  # Wait 5 seconds before retry
+            time.sleep(5)
             try:
                 response = anthropic.messages.create(
                     model="claude-3-sonnet-20240229",
@@ -98,9 +123,9 @@ def main():
     st.title("Caravel Law Lawyer Matcher")
     
     try:
-        # Load the data files with correct names
+        # Load the data files
         availability_data = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
-        bios_data = pd.read_csv('BD_Caravel.csv')  # Fixed filename
+        bios_data = pd.read_csv('BD_Caravel.csv')
         
         # Prepare summary once at startup
         lawyers_summary = prepare_lawyer_summary(availability_data, bios_data)
