@@ -388,8 +388,8 @@ def main():
             ]
         
         if availability_filter != "All":
-
-        temp_lawyers = []
+            
+            temp_lawyers = []
             for lawyer in filtered_lawyers:
                 days = lawyer['days_available']
                 try:
