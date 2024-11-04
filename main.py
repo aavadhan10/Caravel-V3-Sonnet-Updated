@@ -52,7 +52,7 @@ def create_lawyer_cards(lawyers_summary):
         st.warning("No lawyers match the selected filters.")
         return
         
-    st.write("### 📊 Lawyer Availability Overview")
+    st.write("### 📊 Available Lawyers")
     
     lawyers_summary = sorted(lawyers_summary, key=lambda x: x['name'])
     cols = st.columns(3)
@@ -290,9 +290,38 @@ def main():
         # Add spacing
         st.write("")
         
-        # Custom query input
+        # Filter lawyers based on selection (moved outside of search condition)
+        filtered_lawyers = lawyers_summary.copy()
+        
+        if selected_practice_area != "All":
+            filtered_lawyers = [
+                lawyer for lawyer in filtered_lawyers 
+                if selected_practice_area in lawyer['practice_areas']
+            ]
+        
+        if availability_filter != "All":
+            temp_lawyers = []
+            for lawyer in filtered_lawyers:
+                days = lawyer['days_available']
+                try:
+                    days = float(days.split()[0])
+                    if "High Availability" in availability_filter and days >= 3:
+                        temp_lawyers.append(lawyer)
+                    elif "Medium Availability" in availability_filter and 1 <= days < 3:
+                        temp_lawyers.append(lawyer)
+                    elif "Limited Availability" in availability_filter and days < 1:
+                        temp_lawyers.append(lawyer)
+                except (ValueError, AttributeError):
+                    continue
+            filtered_lawyers = temp_lawyers
+
+        # Show filtered results immediately when filters are applied
+        if selected_practice_area != "All" or availability_filter != "All":
+            create_lawyer_cards(filtered_lawyers)
+        
+        # Custom query input for detailed search
         query = st.text_area(
-            "Describe what you're looking for:",
+            "For more specific matching, describe what you're looking for (optional):",
             value=st.session_state.get('query', ''),
             placeholder="Example: I need help with employment contracts and HR policies...",
             height=100
@@ -307,40 +336,17 @@ def main():
             st.session_state.query = ''
             st.rerun()
 
+        # Show Claude's recommendations when search is used
         if search and query:
             st.session_state.query = query
             with st.spinner("Finding the best matches..."):
-                filtered_lawyers = lawyers_summary.copy()
-                
-                if selected_practice_area != "All":
-                    filtered_lawyers = [
-                        lawyer for lawyer in filtered_lawyers 
-                        if selected_practice_area in lawyer['practice_areas']
-                    ]
-                
-                if availability_filter != "All":
-                    temp_lawyers = []
-                    for lawyer in filtered_lawyers:
-                        days = lawyer['days_available']
-                        try:
-                            days = float(days.split()[0])
-                            if "High Availability" in availability_filter and days >= 3:
-                                temp_lawyers.append(lawyer)
-                            elif "Medium Availability" in availability_filter and 1 <= days < 3:
-                                temp_lawyers.append(lawyer)
-                            elif "Limited Availability" in availability_filter and days < 1:
-                                temp_lawyers.append(lawyer)
-                        except (ValueError, AttributeError):
-                            continue
-                    filtered_lawyers = temp_lawyers
-                
                 results = get_claude_response(query, filtered_lawyers)
                 if results:
                     st.markdown("### Top Lawyer Matches")
                     st.markdown(results)
         
-        # Show card view at bottom
-        if st.checkbox("Show All Lawyers", False):
+        # Show all lawyers if no filters are applied and no search is performed
+        if not (selected_practice_area != "All" or availability_filter != "All") and not (search and query):
             create_lawyer_cards(lawyers_summary)
             
     except FileNotFoundError as e:
