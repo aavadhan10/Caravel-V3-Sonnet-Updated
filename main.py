@@ -46,6 +46,22 @@ def get_practice_areas(lawyers_summary):
         all_areas.update(areas)
     return sorted(list(all_areas))
 
+def format_practice_areas(practice_areas):
+    """Format practice areas into a bulleted list"""
+    if not practice_areas:
+        return "Not specified"
+    
+    areas = []
+    for delimiter in [',', ';', '\n']:
+        if delimiter in practice_areas:
+            areas.extend([area.strip() for area in practice_areas.split(delimiter)])
+            break
+    else:
+        areas = [practice_areas]
+    
+    areas = [area for area in areas if area and not area.isspace()]
+    return "\n      • " + "\n      • ".join(areas) if areas else "Not specified"
+
 def create_lawyer_cards(lawyers_summary):
     """Create card layout for lawyers"""
     if not lawyers_summary:
@@ -74,15 +90,20 @@ def create_lawyer_cards(lawyers_summary):
                 **Industry Experience:**  
                 {format_practice_areas(lawyer['experience']).replace('      •', '•')}
                 """)
-
-def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
+    def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     """Create a concise summary of lawyer information"""
     if show_debug:
         st.sidebar.write("### Debug Information")
         st.sidebar.write("Initial data shapes:")
         st.sidebar.write(f"Availability data: {availability_data.shape}")
         st.sidebar.write(f"Bios data: {bios_data.shape}")
+        st.sidebar.write("\nBios data unique lawyers:", len(bios_data))
     
+    # Copy original data to avoid modifications
+    availability_data = availability_data.copy()
+    bios_data = bios_data.copy()
+    
+    # Standardize names in both datasets
     availability_data['Original_Name'] = availability_data['What is your name?'].copy()
     availability_data['Standardized_Name'] = availability_data['What is your name?'].apply(standardize_name)
     
@@ -91,75 +112,91 @@ def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
         lambda x: standardize_name(f"{x['First Name']} {x['Last Name']}"), axis=1)
     
     if show_debug:
-        st.sidebar.write("\n### Name Standardization Results")
-        st.sidebar.write("\nAvailability Data Names:")
-        name_comparison = pd.DataFrame({
-            'Original': availability_data['Original_Name'],
-            'Standardized': availability_data['Standardized_Name']
-        })
-        st.sidebar.write(name_comparison)
+        st.sidebar.write("\nName standardization samples:")
+        st.sidebar.write("Availability Data (first 5):")
+        for _, row in availability_data.head().iterrows():
+            st.sidebar.write(f"Original: {row['Original_Name']} -> Standardized: {row['Standardized_Name']}")
         
-        st.sidebar.write("\nBios Data Names:")
-        name_comparison_bios = pd.DataFrame({
-            'Original': bios_data['Original_Name'],
-            'Standardized': bios_data['Standardized_Name']
-        })
-        st.sidebar.write(name_comparison_bios)
+        st.sidebar.write("\nBios Data (first 5):")
+        for _, row in bios_data.head().iterrows():
+            st.sidebar.write(f"Original: {row['Original_Name']} -> Standardized: {row['Standardized_Name']}")
     
     lawyers_summary = []
     capacity_column = 'Do you have capacity to take on new work?'
     
+    # Show all lawyers in bios first
+    if show_debug:
+        st.sidebar.write("\nAll lawyers in bios:")
+        for _, row in bios_data.iterrows():
+            st.sidebar.write(f"- {row['Original_Name']}")
+    
+    # Check which lawyers have availability data
+    lawyers_with_availability = set(availability_data['Standardized_Name'].unique())
+    lawyers_in_bios = set(bios_data['Standardized_Name'].unique())
+    
+    if show_debug:
+        st.sidebar.write(f"\nLawyers with availability data: {len(lawyers_with_availability)}")
+        st.sidebar.write(f"Lawyers in bios: {len(lawyers_in_bios)}")
+        st.sidebar.write(f"Lawyers missing availability data: {len(lawyers_in_bios - lawyers_with_availability)}")
+    
+    # Modified availability check to be more lenient
     available_lawyers = availability_data[
-        availability_data[capacity_column].fillna('').str.lower().str.contains('yes|maybe|y|m', na=False)
+        (availability_data[capacity_column].fillna('').str.lower().str.contains('yes|maybe|y|m', na=False)) |
+        (availability_data['What is your capacity to take on new work for the forseeable future? Days per week'].fillna('0').astype(str).str.contains('[1-9]'))
     ]
     
     if show_debug:
-        st.sidebar.write(f"\nNumber of available lawyers found: {len(available_lawyers)}")
+        st.sidebar.write(f"\nNumber of lawyers marked as available: {len(available_lawyers)}")
     
-    for _, row in available_lawyers.iterrows():
-        std_name = row['Standardized_Name']
-        bio_row = bios_data[bios_data['Standardized_Name'] == std_name]
+    # Process each lawyer in bios
+    for _, bio_row in bios_data.iterrows():
+        std_name = bio_row['Standardized_Name']
+        avail_row = availability_data[availability_data['Standardized_Name'] == std_name]
         
-        if not bio_row.empty:
-            if show_debug:
-                st.sidebar.write(f"Match found: {row['Original_Name']} ↔ {bio_row.iloc[0]['Original_Name']}")
-            bio_row = bio_row.iloc[0]
+        if not avail_row.empty:
+            avail_row = avail_row.iloc[0]
             
-            summary = {
-                'name': row['Original_Name'],
-                'availability_status': clean_text_field(row[capacity_column]),
-                'practice_areas': clean_text_field(bio_row.get('Area of Practise + Add Info', '')),
-                'experience': clean_text_field(bio_row.get('Industry Experience', '')),
-                'days_available': clean_text_field(row.get(
-                    'What is your capacity to take on new work for the forseeable future? Days per week', 
-                    'Not specified'
-                )),
-                'hours_available': clean_text_field(row.get(
-                    'What is your capacity to take on new work for the foreseeable future? Hours per month',
-                    'Not specified'
-                ))
-            }
-            lawyers_summary.append(summary)
+            # Check if lawyer is available
+            is_available = False
+            capacity = avail_row.get(capacity_column, '').lower()
+            days = str(avail_row.get('What is your capacity to take on new work for the forseeable future? Days per week', '0'))
+            
+            if 'yes' in capacity or 'maybe' in capacity or 'y' in capacity or 'm' in capacity or any(char.isdigit() and char != '0' for char in days):
+                is_available = True
+            
+            if is_available:
+                if show_debug:
+                    st.sidebar.write(f"Including available lawyer: {bio_row['Original_Name']}")
+                
+                summary = {
+                    'name': bio_row['Original_Name'],
+                    'availability_status': clean_text_field(avail_row.get(capacity_column, '')),
+                    'practice_areas': clean_text_field(bio_row.get('Area of Practise + Add Info', '')),
+                    'experience': clean_text_field(bio_row.get('Industry Experience', '')),
+                    'days_available': clean_text_field(avail_row.get(
+                        'What is your capacity to take on new work for the forseeable future? Days per week', 
+                        'Not specified'
+                    )),
+                    'hours_available': clean_text_field(avail_row.get(
+                        'What is your capacity to take on new work for the foreseeable future? Hours per month',
+                        'Not specified'
+                    ))
+                }
+                lawyers_summary.append(summary)
+            elif show_debug:
+                st.sidebar.write(f"Excluding unavailable lawyer: {bio_row['Original_Name']}")
+        elif show_debug:
+            st.sidebar.write(f"No availability data for: {bio_row['Original_Name']}")
     
     if show_debug:
-        st.sidebar.write(f"\nFinal number of matched lawyers: {len(lawyers_summary)}")
+        st.sidebar.write(f"\nFinal number of available lawyers: {len(lawyers_summary)}")
+        st.sidebar.write("\nSummary of filtering:")
+        st.sidebar.write(f"- Total lawyers in bios: {len(bios_data)}")
+        st.sidebar.write(f"- Lawyers with availability data: {len(availability_data)}")
+        st.sidebar.write(f"- Lawyers marked as available: {len(available_lawyers)}")
+        st.sidebar.write(f"- Final lawyer count: {len(lawyers_summary)}")
+    
     return lawyers_summary
-
-def format_practice_areas(practice_areas):
-    """Format practice areas into a bulleted list"""
-    if not practice_areas:
-        return "Not specified"
-    
-    areas = []
-    for delimiter in [',', ';', '\n']:
-        if delimiter in practice_areas:
-            areas.extend([area.strip() for area in practice_areas.split(delimiter)])
-            break
-    else:
-        areas = [practice_areas]
-    
-    areas = [area for area in areas if area and not area.isspace()]
-    return "\n      • " + "\n      • ".join(areas) if areas else "Not specified"
 
 def get_claude_response(query, lawyers_summary):
     """Get Claude's analysis of the best lawyer matches"""
@@ -373,22 +410,44 @@ def main():
                 if selected_practice_area in lawyer['practice_areas']
             ]
         
+        # Updated availability filter logic
         if availability_filter != "All":
             temp_lawyers = []
             for lawyer in filtered_lawyers:
-                days = lawyer['days_available']
+                days_str = lawyer['days_available'].lower()
                 try:
-                    days = float(days.split()[0])
+                    # Handle different formats of days available
+                    if any(char.isdigit() for char in days_str):
+                        # Extract the first number from the string
+                        days = float(''.join([char for char in days_str.split()[0] if char.isdigit() or char == '.']))
+                    else:
+                        # If no numbers found, skip this lawyer
+                        continue
+                        
+                    # Check availability ranges
                     if "High Availability" in availability_filter and days >= 3:
                         temp_lawyers.append(lawyer)
                     elif "Medium Availability" in availability_filter and 1 <= days < 3:
-                        temp_lawyers
                         temp_lawyers.append(lawyer)
                     elif "Limited Availability" in availability_filter and days < 1:
                         temp_lawyers.append(lawyer)
-                except (ValueError, AttributeError):
+                    
+                    # Add debug logging if needed
+                    if show_debug:
+                        st.sidebar.write(f"Processing {lawyer['name']}: {days} days - {availability_filter}")
+                        
+                except (ValueError, AttributeError) as e:
+                    if show_debug:
+                        st.sidebar.write(f"Error processing {lawyer['name']}'s availability: {days_str}")
                     continue
+            
             filtered_lawyers = temp_lawyers
+
+            # Debug information for filtered results
+            if show_debug:
+                st.sidebar.write(f"Filtered lawyers count by availability: {len(filtered_lawyers)}")
+                for lawyer in filtered_lawyers:
+                    st.sidebar.write(f"- {lawyer['name']}: {lawyer['days_available']}")
         
         # Custom query input for detailed search
         query = st.text_area(
@@ -412,6 +471,7 @@ def main():
         st.sidebar.markdown("### Current Filters")
         st.sidebar.markdown(f"**Practice Area:** {selected_practice_area}")
         st.sidebar.markdown(f"**Availability:** {availability_filter}")
+        st.sidebar.markdown(f"**Matching Lawyers:** {len(filtered_lawyers)}")
 
         # Show Claude's recommendations when search is used
         if search and query:
