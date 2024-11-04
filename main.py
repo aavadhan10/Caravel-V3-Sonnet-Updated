@@ -51,6 +51,8 @@ def create_lawyer_cards(lawyers_summary):
     if not lawyers_summary:
         st.warning("No lawyers match the selected filters.")
         return
+        
+    st.write("### 📊 Available Lawyers")
     
     lawyers_summary = sorted(lawyers_summary, key=lambda x: x['name'])
     cols = st.columns(3)
@@ -265,7 +267,7 @@ def main():
         # Add spacing
         st.write("")
         
-        # Three columns for filters and view all dropdown
+        # Three columns for filters
         filter_col1, filter_col2, filter_col3 = st.columns(3)
         
         with filter_col1:
@@ -284,14 +286,11 @@ def main():
                  "Medium Availability (1-2 days/week)", 
                  "Limited Availability (<1 day/week)"]
             )
-            
-        with filter_col3:
-            show_all = st.expander("📊 View All Lawyers")
         
         # Add spacing
         st.write("")
         
-        # Filter lawyers based on selection (this affects both view all and search)
+        # Filter lawyers based on selection (moved outside of search condition)
         filtered_lawyers = lawyers_summary.copy()
         
         if selected_practice_area != "All":
@@ -316,12 +315,9 @@ def main():
                     continue
             filtered_lawyers = temp_lawyers
 
-        # Show filtered results in the expander
-        with show_all:
-            if filtered_lawyers:
-                create_lawyer_cards(filtered_lawyers)
-            else:
-                st.warning("No lawyers match the selected filters.")
+        # Show filtered results immediately when filters are applied
+        if selected_practice_area != "All" or availability_filter != "All":
+            create_lawyer_cards(filtered_lawyers)
         
         # Custom query input for detailed search
         query = st.text_area(
@@ -340,17 +336,18 @@ def main():
             st.session_state.query = ''
             st.rerun()
 
-        # Show Claude's recommendations using the filtered lawyers
+        # Show Claude's recommendations when search is used
         if search and query:
             st.session_state.query = query
             with st.spinner("Finding the best matches..."):
-                if filtered_lawyers:
-                    results = get_claude_response(query, filtered_lawyers)
-                    if results:
-                        st.markdown("### Top Lawyer Matches")
-                        st.markdown(results)
-                else:
-                    st.warning("No lawyers match the selected filters. Try adjusting your filters to see more options.")
+                results = get_claude_response(query, filtered_lawyers)
+                if results:
+                    st.markdown("### Top Lawyer Matches")
+                    st.markdown(results)
+        
+        # Show all lawyers if no filters are applied and no search is performed
+        if not (selected_practice_area != "All" or availability_filter != "All") and not (search and query):
+            create_lawyer_cards(lawyers_summary)
             
     except FileNotFoundError as e:
         st.error("Could not find the required data files. Please check your data file locations.")
