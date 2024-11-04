@@ -90,7 +90,7 @@ def create_lawyer_cards(lawyers_summary):
                 **Industry Experience:**  
                 {format_practice_areas(lawyer['experience']).replace('      •', '•')}
                 """)
-ef prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
+def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     """Create a concise summary of lawyer information with improved matching"""
     if show_debug:
         st.sidebar.write("### Debug Information")
