@@ -262,7 +262,7 @@ def main():
             return
         
         # Tabs for different views
-        tab1, tab2 = st.tabs(["🔍 Find a Lawyer", "📋 View All Lawyers"])
+        tab1, tab2 = st.tabs(["🔍 Find a Lawyer", "📋 View All Lawyers Availability"])
         
         with tab1:
             st.write("### How can we help you find the right lawyer?")
