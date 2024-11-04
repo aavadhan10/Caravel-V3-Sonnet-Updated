@@ -412,7 +412,6 @@ def main():
         st.sidebar.markdown("### Current Filters")
         st.sidebar.markdown(f"**Practice Area:** {selected_practice_area}")
         st.sidebar.markdown(f"**Availability:** {availability_filter}")
-        st.sidebar.markdown(f"**Matching Lawyers:** {len(filtered_lawyers)}")
 
         # Show Claude's recommendations when search is used
         if search and query:
