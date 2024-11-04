@@ -63,33 +63,32 @@ def format_practice_areas(practice_areas):
     return "\n      • " + "\n      • ".join(areas) if areas else "Not specified"
 
 def create_lawyer_cards(lawyers_summary):
-    """Create card layout for lawyers in sidebar"""
+    """Create card layout for lawyers"""
     if not lawyers_summary:
-        st.sidebar.warning("No lawyers match the selected filters.")
+        st.warning("No lawyers match the selected filters.")
         return
         
-    st.sidebar.markdown("---")
-    st.sidebar.write("### 📊 Available Lawyers")
+    st.write("### 📊 Available Lawyers")
     
     lawyers_summary = sorted(lawyers_summary, key=lambda x: x['name'])
+    cols = st.columns(3)
     
-    for lawyer in lawyers_summary:
-        with st.sidebar.expander(f"🧑‍⚖️ {lawyer['name']}", expanded=False):
-            st.markdown(f"""
-            **Availability Status:**  
-            {lawyer['availability_status']}
-            
-            **Schedule:**
-            - {lawyer['days_available']} days/week
-            - {lawyer['hours_available']}/month
-            
-            **Practice Areas:**  
-            {format_practice_areas(lawyer['practice_areas']).replace('      •', '•')}
-            
-            **Industry Experience:**  
-            {format_practice_areas(lawyer['experience']).replace('      •', '•')}
-            """)
-
+    for idx, lawyer in enumerate(lawyers_summary):
+        with cols[idx % 3]:
+            with st.expander(f"🧑‍⚖️ {lawyer['name']}", expanded=False):
+                st.markdown(f"""
+                **Availability Status:**  
+                {lawyer['availability_status']}
+                
+                **Schedule:**
+                - {lawyer['days_available']} days/week
+                - {lawyer['hours_available']}/month
+                
+                **Practice Areas:**  
+                {format_practice_areas(lawyer['practice_areas']).replace('      •', '•')}
+                
+                **Industry Experience:**  
+                {format_practice_areas(lawyer['experience']).replace('      •', '•')}
                 """)
 def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     """Create a concise summary of lawyer information"""
@@ -326,7 +325,7 @@ def display_recommendations(query, lawyers_summary):
         else:
             st.warning("No matching lawyers found for your specific needs. Try adjusting your search criteria.")
 
-ef main():
+def main():
     st.title("🧑‍⚖️ Caravel Law Lawyer Matcher")
     
     try:
@@ -337,7 +336,7 @@ ef main():
         # Move filters to sidebar
         st.sidebar.title("Filters")
         
-        # Debug checkbox in sidebar (moved to bottom)
+        # Debug checkbox in sidebar (at the bottom)
         show_debug = st.sidebar.checkbox("Show Debug Information", False, help="Show detailed processing information")
         
         lawyers_summary = prepare_lawyer_summary(availability_data, bios_data, show_debug)
@@ -364,12 +363,17 @@ ef main():
              "Limited Availability (<1 day/week)"]
         )
         
-        # Show filtered results counts in sidebar
+        # Add a divider in sidebar
         st.sidebar.markdown("---")
-        st.sidebar.markdown("### Current Filters")
-        st.sidebar.markdown(f"**Practice Area:** {selected_practice_area}")
-        st.sidebar.markdown(f"**Availability:** {availability_filter}")
-        st.sidebar.markdown(f"**Matching Lawyers:** {len(filtered_lawyers)}")
+        
+        # Debug information at bottom of sidebar
+        if show_debug:
+            with st.sidebar.expander("Debug Information"):
+                st.write("### Raw Data Preview")
+                st.write("Availability Data First Few Rows:")
+                st.write(availability_data.head())
+                st.write("\nBios Data First Few Rows:")
+                st.write(bios_data.head())
         
         # Main content area
         st.write("### How can we help you find the right lawyer?")
@@ -413,17 +417,25 @@ ef main():
             for lawyer in filtered_lawyers:
                 days_str = lawyer['days_available'].lower()
                 try:
+                    # Handle different formats of days available
                     if any(char.isdigit() for char in days_str):
+                        # Extract the first number from the string
                         days = float(''.join([char for char in days_str.split()[0] if char.isdigit() or char == '.']))
                     else:
+                        # If no numbers found, skip this lawyer
                         continue
                         
+                    # Check availability ranges
                     if "High Availability" in availability_filter and days >= 3:
                         temp_lawyers.append(lawyer)
                     elif "Medium Availability" in availability_filter and 1 <= days < 3:
                         temp_lawyers.append(lawyer)
                     elif "Limited Availability" in availability_filter and days < 1:
                         temp_lawyers.append(lawyer)
+                    
+                    # Add debug logging if needed
+                    if show_debug:
+                        st.sidebar.write(f"Processing {lawyer['name']}: {days} days - {availability_filter}")
                         
                 except (ValueError, AttributeError) as e:
                     if show_debug:
@@ -431,6 +443,12 @@ ef main():
                     continue
             
             filtered_lawyers = temp_lawyers
+
+            # Debug information for filtered results
+            if show_debug:
+                st.sidebar.write(f"Filtered lawyers count by availability: {len(filtered_lawyers)}")
+                for lawyer in filtered_lawyers:
+                    st.sidebar.write(f"- {lawyer['name']}: {lawyer['days_available']}")
         
         # Custom query input for detailed search
         query = st.text_area(
@@ -449,22 +467,19 @@ ef main():
             st.session_state.query = ''
             st.rerun()
 
-        # Debug information at bottom of sidebar
-        if show_debug:
-            st.sidebar.markdown("---")
-            with st.sidebar.expander("Debug Information"):
-                st.write("### Raw Data Preview")
-                st.write("Availability Data First Few Rows:")
-                st.write(availability_data.head())
-                st.write("\nBios Data First Few Rows:")
-                st.write(bios_data.head())
+        # Show filtered results counts in sidebar
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### Current Filters")
+        st.sidebar.markdown(f"**Practice Area:** {selected_practice_area}")
+        st.sidebar.markdown(f"**Availability:** {availability_filter}")
+    
 
         # Show Claude's recommendations when search is used
         if search and query:
             st.session_state.query = query
             display_recommendations(query, filtered_lawyers)
         
-        # Show lawyer cards in sidebar if no search is being performed
+        # Show all lawyers if no filters are applied and no search is performed
         if not (search and query):
             create_lawyer_cards(filtered_lawyers)
             
@@ -481,3 +496,4 @@ ef main():
 
 if __name__ == "__main__":
     main()
+    
