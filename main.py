@@ -184,10 +184,9 @@ Please analyze the lawyers' profiles and provide the best 3-7 matches in a struc
 MATCH_START
 Rank: 1
 Name: John Smith
-Match Score: 95%
 Key Expertise: Corporate Law, M&A
 Availability: 3 days/week
-Fit Summary: Extensive experience in corporate transactions and M&A deals
+Recommendation Reason: 15+ years handling similar corporate transactions with emphasis on tech sector
 MATCH_END
 
 MATCH_START
@@ -196,8 +195,8 @@ Rank: 2
 
 Important guidelines:
 - Provide 3-7 matches only
-- Include a match score (0-100%) based on fit
-- Keep the Fit Summary concise (max 100 characters)
+- Keep the Recommendation Reason specific but concise (max 150 characters)
+- Focus on concrete experience and specific expertise that matches the client's needs
 - Use the exact delimiters shown above
 - Only include lawyers whose expertise truly matches the needs"""
 
@@ -234,7 +233,7 @@ def parse_claude_response(response):
     df = pd.DataFrame(matches)
     if not df.empty:
         # Reorder columns
-        desired_columns = ['Rank', 'Name', 'Match Score', 'Key Expertise', 'Availability', 'Fit Summary']
+        desired_columns = ['Rank', 'Name', 'Key Expertise', 'Availability', 'Recommendation Reason']
         df = df[desired_columns]
         
         # Convert Rank to numeric for proper sorting
@@ -258,14 +257,8 @@ def display_recommendations(query, lawyers_summary):
                     "Rank": st.column_config.NumberColumn(
                         "Rank",
                         help="Match ranking",
-                        format="%d"
-                    ),
-                    "Match Score": st.column_config.ProgressColumn(
-                        "Match Score",
-                        help="Percentage match to your needs",
-                        format="%d%%",
-                        min_value=0,
-                        max_value=100,
+                        format="%d",
+                        width="small"
                     ),
                     "Name": st.column_config.Column(
                         "Name",
@@ -282,25 +275,15 @@ def display_recommendations(query, lawyers_summary):
                         help="Current availability",
                         width="medium"
                     ),
-                    "Fit Summary": st.column_config.Column(
-                        "Fit Summary",
-                        help="Why this lawyer is a good match",
+                    "Recommendation Reason": st.column_config.Column(
+                        "Recommendation Reason",
+                        help="Why this lawyer is specifically recommended for your needs",
                         width="large"
                     )
                 },
                 hide_index=True,
                 use_container_width=True
             )
-            
-            # Add explanation of match scores
-            with st.expander("ℹ️ About Match Scores"):
-                st.markdown("""
-                Match scores are calculated based on:
-                - Alignment of expertise with your needs
-                - Current availability
-                - Relevant industry experience
-                - Depth of experience in requested areas
-                """)
         else:
             st.warning("No matching lawyers found for your specific needs. Try adjusting your search criteria.")
 
@@ -312,16 +295,11 @@ def main():
         availability_data = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
         bios_data = pd.read_csv('BD_Caravel.csv')
         
-        # Debug checkbox in sidebar
-        show_debug = st.sidebar.checkbox("Show Debug Information", False)
+        # Move filters to sidebar
+        st.sidebar.title("Filters")
         
-        if show_debug:
-            st.sidebar.write("### Raw Data Preview")
-            with st.sidebar.expander("Show Data Preview"):
-                st.write("Availability Data First Few Rows:")
-                st.write(availability_data.head())
-                st.write("\nBios Data First Few Rows:")
-                st.write(bios_data.head())
+        # Debug checkbox in sidebar (at the bottom)
+        show_debug = st.sidebar.checkbox("Show Debug Information", False, help="Show detailed processing information")
         
         lawyers_summary = prepare_lawyer_summary(availability_data, bios_data, show_debug)
         
@@ -329,6 +307,37 @@ def main():
             st.error("No available lawyers found in the system. Please check the data processing above.")
             return
         
+        # Move filters to sidebar
+        st.sidebar.markdown("### Filter Options")
+        
+        # Get all unique practice areas
+        all_practice_areas = get_practice_areas(lawyers_summary)
+        selected_practice_area = st.sidebar.selectbox(
+            "Practice Area",
+            ["All"] + all_practice_areas
+        )
+        
+        # Add availability filter
+        availability_filter = st.sidebar.selectbox(
+            "Availability",
+            ["All", "High Availability (3+ days/week)", 
+             "Medium Availability (1-2 days/week)", 
+             "Limited Availability (<1 day/week)"]
+        )
+        
+        # Add a divider in sidebar
+        st.sidebar.markdown("---")
+        
+        # Debug information at bottom of sidebar
+        if show_debug:
+            with st.sidebar.expander("Debug Information"):
+                st.write("### Raw Data Preview")
+                st.write("Availability Data First Few Rows:")
+                st.write(availability_data.head())
+                st.write("\nBios Data First Few Rows:")
+                st.write(bios_data.head())
+        
+        # Main content area
         st.write("### How can we help you find the right lawyer?")
         st.write("Tell us about your legal needs and we'll match you with the best available lawyers.")
         
@@ -355,29 +364,6 @@ def main():
         # Add spacing
         st.write("")
         
-        # Three columns for filters
-        filter_col1, filter_col2, filter_col3 = st.columns(3)
-        
-        with filter_col1:
-            # Get all unique practice areas
-            all_practice_areas = get_practice_areas(lawyers_summary)
-            selected_practice_area = st.selectbox(
-                "Filter by Practice Area",
-                ["All"] + all_practice_areas
-            )
-        
-        with filter_col2:
-            # Add availability filter
-            availability_filter = st.selectbox(
-                "Filter by Availability",
-                ["All", "High Availability (3+ days/week)", 
-                 "Medium Availability (1-2 days/week)", 
-                 "Limited Availability (<1 day/week)"]
-            )
-        
-        # Add spacing
-        st.write("")
-        
         # Filter lawyers based on selection
         filtered_lawyers = lawyers_summary.copy()
         
@@ -388,7 +374,6 @@ def main():
             ]
         
         if availability_filter != "All":
-            
             temp_lawyers = []
             for lawyer in filtered_lawyers:
                 days = lawyer['days_available']
@@ -397,16 +382,13 @@ def main():
                     if "High Availability" in availability_filter and days >= 3:
                         temp_lawyers.append(lawyer)
                     elif "Medium Availability" in availability_filter and 1 <= days < 3:
+                        temp_lawyers
                         temp_lawyers.append(lawyer)
                     elif "Limited Availability" in availability_filter and days < 1:
                         temp_lawyers.append(lawyer)
                 except (ValueError, AttributeError):
                     continue
             filtered_lawyers = temp_lawyers
-
-        # Show filtered results immediately when filters are applied
-        if selected_practice_area != "All" or availability_filter != "All":
-            create_lawyer_cards(filtered_lawyers)
         
         # Custom query input for detailed search
         query = st.text_area(
@@ -425,14 +407,21 @@ def main():
             st.session_state.query = ''
             st.rerun()
 
+        # Show filtered results counts in sidebar
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### Current Filters")
+        st.sidebar.markdown(f"**Practice Area:** {selected_practice_area}")
+        st.sidebar.markdown(f"**Availability:** {availability_filter}")
+        st.sidebar.markdown(f"**Matching Lawyers:** {len(filtered_lawyers)}")
+
         # Show Claude's recommendations when search is used
         if search and query:
             st.session_state.query = query
             display_recommendations(query, filtered_lawyers)
         
         # Show all lawyers if no filters are applied and no search is performed
-        if not (selected_practice_area != "All" or availability_filter != "All") and not (search and query):
-            create_lawyer_cards(lawyers_summary)
+        if not (search and query):
+            create_lawyer_cards(filtered_lawyers)
             
     except FileNotFoundError as e:
         st.error("Could not find the required data files. Please check your data file locations.")
