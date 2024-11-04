@@ -179,28 +179,27 @@ Client Need: {query}
 
 {summary_text}
 
-Please analyze the lawyers' profiles and provide the best 3-7 matches, following these guidelines:
+Please analyze the lawyers' profiles and provide the best 3-7 matches in a structured format suitable for creating a table. Format your response exactly like this example, maintaining the exact delimiter structure:
 
-1. Carefully evaluate each lawyer's practice areas and experience against the client's needs
-2. Consider their current availability
-3. Provide your recommendations in this format:
-   
-   Top Matches for Your Needs:
+MATCH_START
+Rank: 1
+Name: John Smith
+Match Score: 95%
+Key Expertise: Corporate Law, M&A
+Availability: 3 days/week
+Fit Summary: Extensive experience in corporate transactions and M&A deals
+MATCH_END
 
-   1. [Lawyer Name]
-      • Relevant Expertise: [List specific matching practice areas and experience]
-      • Availability: [Include availability details]
-      • Why They're a Good Fit: [Brief explanation]
+MATCH_START
+Rank: 2
+[Continue with next match]
 
-   [Repeat for each recommended lawyer]
-
-Important:
-- Recommend between 3-7 lawyers, ranked by best fit
-- Only include lawyers whose expertise truly matches the needs
-- Be specific about why each lawyer is a good match
-- If fewer than 3 strong matches exist, explain what expertise was needed but not found
-
-Remember to focus on clear, practical matches between the client's needs and lawyers' specific expertise."""
+Important guidelines:
+- Provide 3-7 matches only
+- Include a match score (0-100%) based on fit
+- Keep the Fit Summary concise (max 100 characters)
+- Use the exact delimiters shown above
+- Only include lawyers whose expertise truly matches the needs"""
 
     try:
         response = anthropic.messages.create(
@@ -211,10 +210,99 @@ Remember to focus on clear, practical matches between the client's needs and law
                 "content": prompt
             }]
         )
-        return response.content[0].text
+        return parse_claude_response(response.content[0].text)
     except Exception as e:
         st.error(f"Error getting recommendations: {str(e)}")
         return None
+
+def parse_claude_response(response):
+    """Parse Claude's response into a structured format for table display"""
+    matches = []
+    for match in response.split('MATCH_START')[1:]:  # Skip first empty split
+        match_data = {}
+        lines = match.split('MATCH_END')[0].strip().split('\n')
+        
+        for line in lines:
+            if ':' in line:
+                key, value = line.split(':', 1)
+                match_data[key.strip()] = value.strip()
+        
+        if match_data:  # Only append if we got valid data
+            matches.append(match_data)
+    
+    # Convert to DataFrame
+    df = pd.DataFrame(matches)
+    if not df.empty:
+        # Reorder columns
+        desired_columns = ['Rank', 'Name', 'Match Score', 'Key Expertise', 'Availability', 'Fit Summary']
+        df = df[desired_columns]
+        
+        # Convert Rank to numeric for proper sorting
+        df['Rank'] = pd.to_numeric(df['Rank'])
+        df = df.sort_values('Rank')
+    
+    return df
+
+def display_recommendations(query, lawyers_summary):
+    """Display lawyer recommendations in a formatted table"""
+    with st.spinner("Finding the best matches..."):
+        results_df = get_claude_response(query, lawyers_summary)
+        
+        if results_df is not None and not results_df.empty:
+            st.markdown("### 🎯 Top Lawyer Matches")
+            
+            # Apply custom styling
+            st.dataframe(
+                results_df,
+                column_config={
+                    "Rank": st.column_config.NumberColumn(
+                        "Rank",
+                        help="Match ranking",
+                        format="%d"
+                    ),
+                    "Match Score": st.column_config.ProgressColumn(
+                        "Match Score",
+                        help="Percentage match to your needs",
+                        format="%d%%",
+                        min_value=0,
+                        max_value=100,
+                    ),
+                    "Name": st.column_config.Column(
+                        "Name",
+                        help="Lawyer name",
+                        width="medium"
+                    ),
+                    "Key Expertise": st.column_config.Column(
+                        "Key Expertise",
+                        help="Relevant areas of expertise",
+                        width="large"
+                    ),
+                    "Availability": st.column_config.Column(
+                        "Availability",
+                        help="Current availability",
+                        width="medium"
+                    ),
+                    "Fit Summary": st.column_config.Column(
+                        "Fit Summary",
+                        help="Why this lawyer is a good match",
+                        width="large"
+                    )
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            # Add explanation of match scores
+            with st.expander("ℹ️ About Match Scores"):
+                st.markdown("""
+                Match scores are calculated based on:
+                - Alignment of expertise with your needs
+                - Current availability
+                - Relevant industry experience
+                - Depth of experience in requested areas
+                """)
+        else:
+            st.warning("No matching lawyers found for your specific needs. Try adjusting your search criteria.")
 
 def main():
     st.title("🧑‍⚖️ Caravel Law Lawyer Matcher")
@@ -290,7 +378,7 @@ def main():
         # Add spacing
         st.write("")
         
-        # Filter lawyers based on selection (moved outside of search condition)
+        # Filter lawyers based on selection
         filtered_lawyers = lawyers_summary.copy()
         
         if selected_practice_area != "All":
@@ -300,7 +388,8 @@ def main():
             ]
         
         if availability_filter != "All":
-            temp_lawyers = []
+
+        temp_lawyers = []
             for lawyer in filtered_lawyers:
                 days = lawyer['days_available']
                 try:
@@ -339,11 +428,7 @@ def main():
         # Show Claude's recommendations when search is used
         if search and query:
             st.session_state.query = query
-            with st.spinner("Finding the best matches..."):
-                results = get_claude_response(query, filtered_lawyers)
-                if results:
-                    st.markdown("### Top Lawyer Matches")
-                    st.markdown(results)
+            display_recommendations(query, filtered_lawyers)
         
         # Show all lawyers if no filters are applied and no search is performed
         if not (selected_practice_area != "All" or availability_filter != "All") and not (search and query):
