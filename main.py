@@ -48,6 +48,47 @@ def clean_text_field(text):
         return ""
     return text.strip()
 
+def get_practice_areas(lawyers_summary):
+    """Extract unique practice areas from lawyers summary"""
+    all_areas = set()
+    for lawyer in lawyers_summary:
+        areas = [area.strip() for area in lawyer['practice_areas'].split(',') if area.strip()]
+        all_areas.update(areas)
+    return sorted(list(all_areas))
+
+def create_lawyer_cards(lawyers_summary):
+    """Create card layout for lawyers"""
+    if not lawyers_summary:
+        st.warning("No lawyers match the selected filters.")
+        return
+        
+    st.write("### 📊 Lawyer Availability Overview")
+    
+    # Sort lawyers by name
+    lawyers_summary = sorted(lawyers_summary, key=lambda x: x['name'])
+    
+    # Create three columns
+    cols = st.columns(3)
+    
+    # Distribute lawyers across columns
+    for idx, lawyer in enumerate(lawyers_summary):
+        with cols[idx % 3]:
+            with st.expander(f"🧑‍⚖️ {lawyer['name']}", expanded=False):
+                st.markdown(f"""
+                **Availability Status:**  
+                {lawyer['availability_status']}
+                
+                **Schedule:**
+                - {lawyer['days_available']} days/week
+                - {lawyer['hours_available']}/month
+                
+                **Practice Areas:**  
+                {format_practice_areas(lawyer['practice_areas']).replace('      •', '•')}
+                
+                **Industry Experience:**  
+                {format_practice_areas(lawyer['experience']).replace('      •', '•')}
+                """)
+
 def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     """Create a concise summary of lawyer information"""
     if show_debug:
@@ -220,53 +261,107 @@ def main():
             st.error("No available lawyers found in the system. Please check the data processing above.")
             return
         
-        st.write("### How can we help you find the right lawyer?")
-        st.write("Tell us about your legal needs and we'll match you with the best available lawyers.")
+        # Tabs for different views
+        tab1, tab2 = st.tabs(["🔍 Find a Lawyer", "📋 View All Lawyers"])
         
-        # Example queries
-        examples = [
-            "I need a lawyer with trademark and IP experience who can start work soon",
-            "Looking for someone experienced in employment law to help with HR policies",
-            "Need a lawyer experienced with startups and financing",
-            "Who would be best for drafting and negotiating SaaS agreements?"
-        ]
+        with tab1:
+            st.write("### How can we help you find the right lawyer?")
+            st.write("Tell us about your legal needs and we'll match you with the best available lawyers.")
+            
+            # Example queries
+            examples = [
+                "I need a lawyer with trademark and IP experience who can start work soon",
+                "Looking for someone experienced in employment law to help with HR policies",
+                "Need a lawyer experienced with startups and financing",
+                "Who would be best for drafting and negotiating SaaS agreements?"
+            ]
+            
+            # Example query buttons
+            col1, col2 = st.columns(2)
+            for i, example in enumerate(examples):
+                if i % 2 == 0:
+                    if col1.button(f"🔍 {example}"):
+                        st.session_state.query = example
+                        st.rerun()
+                else:
+                    if col2.button(f"🔍 {example}"):
+                        st.session_state.query = example
+                        st.rerun()
+
+            # Custom query input
+            query = st.text_area(
+                "Describe what you're looking for:",
+                value=st.session_state.get('query', ''),
+                placeholder="Example: I need help with employment contracts and HR policies...",
+                height=100
+            )
+
+            # Search and Clear buttons
+            col1, col2 = st.columns([1, 4])
+            search = col1.button("🔎 Search")
+            clear = col2.button("Clear")
+
+            if clear:
+                st.session_state.query = ''
+                st.rerun()
+
+            if search and query:
+                st.session_state.query = query
+                with st.spinner("Finding the best matches..."):
+                    results = get_claude_response(query, lawyers_summary)
+                    if results:
+                        st.markdown("### Top Lawyer Matches")
+                        st.markdown(results)
         
-        # Example query buttons
-        col1, col2 = st.columns(2)
-        for i, example in enumerate(examples):
-            if i % 2 == 0:
-                if col1.button(f"🔍 {example}"):
-                    st.session_state.query = example
-                    st.rerun()
-            else:
-                if col2.button(f"🔍 {example}"):
-                    st.session_state.query = example
-                    st.rerun()
-
-        # Custom query input
-        query = st.text_area(
-            "Describe what you're looking for:",
-            value=st.session_state.get('query', ''),
-            placeholder="Example: I need help with employment contracts and HR policies...",
-            height=100
-        )
-
-        # Search and Clear buttons
-        col1, col2 = st.columns([1, 4])
-        search = col1.button("🔎 Search")
-        clear = col2.button("Clear")
-
-        if clear:
-            st.session_state.query = ''
-            st.rerun()
-
-        if search and query:
-            st.session_state.query = query
-            with st.spinner("Finding the best matches..."):
-                results = get_claude_response(query, lawyers_summary)
-                if results:
-                    st.markdown("### Top Lawyer Matches")
-                    st.markdown(results)
+        with tab2:
+            # Add filters in sidebar
+            st.sidebar.write("### 🔍 Filter Lawyers")
+            
+            # Get all unique practice areas
+            all_practice_areas = get_practice_areas(lawyers_summary)
+            
+            # Create filters
+            selected_practice_area = st.sidebar.selectbox(
+                "Filter by Practice Area",
+                ["All"] + all_practice_areas
+            )
+            
+            # Add availability filter
+            availability_filter = st.sidebar.multiselect(
+                "Filter by Availability",
+                ["High Availability (3+ days/week)", "Medium Availability (1-2 days/week)", "Limited Availability (<1 day/week)"],
+                default=[]
+            )
+            
+            # Filter lawyers based on selection
+            filtered_lawyers = lawyers_summary.copy()
+            
+            # Apply practice area filter
+            if selected_practice_area != "All":
+                filtered_lawyers = [
+                    lawyer for lawyer in filtered_lawyers 
+                    if selected_practice_area in lawyer['practice_areas']
+                ]
+            
+            # Apply availability filter
+            if availability_filter:
+                temp_lawyers = []
+                for lawyer in filtered_lawyers:
+                    days = lawyer['days_available']
+                    try:
+                        days = float(days.split()[0])  # Extract number from "X days/week"
+                        if "High Availability (3+ days/week)" in availability_filter and days >= 3:
+                            temp_lawyers.append(lawyer)
+                        elif "Medium Availability (1-2 days/week)" in availability_filter and 1 <= days < 3:
+                            temp_lawyers.append(lawyer)
+                        elif "Limited Availability (<1 day/week)" in availability_filter and days < 1:
+                            temp_lawyers.append(lawyer)
+                    except (ValueError, AttributeError):
+                        continue
+                filtered_lawyers = temp_lawyers
+            
+            # Show lawyer cards
+            create_lawyer_cards(filtered_lawyers)
             
     except FileNotFoundError as e:
         st.error("Could not find the required data files. Please check your data file locations.")
