@@ -92,10 +92,10 @@ def create_lawyer_cards(lawyers_summary):
 def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     """Create a concise summary of lawyer information"""
     if show_debug:
-        st.write("### Debug Information")
-        st.write("Initial data shapes:")
-        st.write(f"Availability data: {availability_data.shape}")
-        st.write(f"Bios data: {bios_data.shape}")
+        st.sidebar.write("### Debug Information")
+        st.sidebar.write("Initial data shapes:")
+        st.sidebar.write(f"Availability data: {availability_data.shape}")
+        st.sidebar.write(f"Bios data: {bios_data.shape}")
     
     # Process availability data names
     availability_data['Original_Name'] = availability_data['What is your name?'].copy()
@@ -107,20 +107,20 @@ def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
         lambda x: standardize_name(f"{x['First Name']} {x['Last Name']}"), axis=1)
     
     if show_debug:
-        st.write("\n### Name Standardization Results")
-        st.write("\nAvailability Data Names:")
+        st.sidebar.write("\n### Name Standardization Results")
+        st.sidebar.write("\nAvailability Data Names:")
         name_comparison = pd.DataFrame({
             'Original': availability_data['Original_Name'],
             'Standardized': availability_data['Standardized_Name']
         })
-        st.write(name_comparison)
+        st.sidebar.write(name_comparison)
         
-        st.write("\nBios Data Names:")
+        st.sidebar.write("\nBios Data Names:")
         name_comparison_bios = pd.DataFrame({
             'Original': bios_data['Original_Name'],
             'Standardized': bios_data['Standardized_Name']
         })
-        st.write(name_comparison_bios)
+        st.sidebar.write(name_comparison_bios)
     
     lawyers_summary = []
     capacity_column = 'Do you have capacity to take on new work?'
@@ -131,7 +131,7 @@ def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     ]
     
     if show_debug:
-        st.write(f"\nNumber of available lawyers found: {len(available_lawyers)}")
+        st.sidebar.write(f"\nNumber of available lawyers found: {len(available_lawyers)}")
     
     # Match lawyers using standardized names
     for _, row in available_lawyers.iterrows():
@@ -140,7 +140,7 @@ def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
         
         if not bio_row.empty:
             if show_debug:
-                st.write(f"Match found: {row['Original_Name']} ↔ {bio_row.iloc[0]['Original_Name']}")
+                st.sidebar.write(f"Match found: {row['Original_Name']} ↔ {bio_row.iloc[0]['Original_Name']}")
             bio_row = bio_row.iloc[0]
             
             summary = {
@@ -160,7 +160,7 @@ def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
             lawyers_summary.append(summary)
     
     if show_debug:
-        st.write(f"\nFinal number of matched lawyers: {len(lawyers_summary)}")
+        st.sidebar.write(f"\nFinal number of matched lawyers: {len(lawyers_summary)}")
     return lawyers_summary
 
 def format_practice_areas(practice_areas):
@@ -249,11 +249,12 @@ def main():
         show_debug = st.sidebar.checkbox("Show Debug Information", False)
         
         if show_debug:
-            st.write("### Raw Data Preview")
-            st.write("Availability Data First Few Rows:")
-            st.write(availability_data.head())
-            st.write("\nBios Data First Few Rows:")
-            st.write(bios_data.head())
+            st.sidebar.write("### Raw Data Preview")
+            with st.sidebar.expander("Show Data Preview"):
+                st.write("Availability Data First Few Rows:")
+                st.write(availability_data.head())
+                st.write("\nBios Data First Few Rows:")
+                st.write(bios_data.head())
         
         lawyers_summary = prepare_lawyer_summary(availability_data, bios_data, show_debug)
         
@@ -261,13 +262,13 @@ def main():
             st.error("No available lawyers found in the system. Please check the data processing above.")
             return
         
-        # Tabs for different views
-        tab1, tab2 = st.tabs(["🔍 Find a Lawyer", "📋 View All Lawyers Availability"])
+        st.write("### How can we help you find the right lawyer?")
+        st.write("Tell us about your legal needs and we'll match you with the best available lawyers.")
         
-        with tab1:
-            st.write("### How can we help you find the right lawyer?")
-            st.write("Tell us about your legal needs and we'll match you with the best available lawyers.")
-            
+        # Create main columns for search and filters
+        search_col, filter_col = st.columns([3, 2])
+        
+        with search_col:
             # Example queries
             examples = [
                 "I need a lawyer with trademark and IP experience who can start work soon",
@@ -297,81 +298,82 @@ def main():
             )
 
             # Search and Clear buttons
-            col1, col2 = st.columns([1, 4])
-            search = col1.button("🔎 Search")
-            clear = col2.button("Clear")
-
-            if clear:
-                st.session_state.query = ''
-                st.rerun()
-
-            if search and query:
-                st.session_state.query = query
-                with st.spinner("Finding the best matches..."):
-                    results = get_claude_response(query, lawyers_summary)
-                    if results:
-                        st.markdown("### Top Lawyer Matches")
-                        st.markdown(results)
+            button_col1, button_col2 = st.columns([1, 4])
+            search = button_col1.button("🔎 Search")
+            clear = button_col2.button("Clear")
         
-        with tab2:
-            # Add filters in sidebar
-            st.sidebar.write("### 🔍 Filter Lawyers")
+        with filter_col:
+            st.write("### 🔍 Filter Lawyers")
             
             # Get all unique practice areas
             all_practice_areas = get_practice_areas(lawyers_summary)
             
             # Create filters
-            selected_practice_area = st.sidebar.selectbox(
+            selected_practice_area = st.selectbox(
                 "Filter by Practice Area",
                 ["All"] + all_practice_areas
             )
             
             # Add availability filter
-            availability_filter = st.sidebar.multiselect(
+            availability_filter = st.selectbox(
                 "Filter by Availability",
-                ["High Availability (3+ days/week)", "Medium Availability (1-2 days/week)", "Limited Availability (<1 day/week)"],
-                default=[]
+                ["All", "High Availability (3+ days/week)", 
+                 "Medium Availability (1-2 days/week)", 
+                 "Limited Availability (<1 day/week)"]
             )
-            
-            # Filter lawyers based on selection
-            filtered_lawyers = lawyers_summary.copy()
-            
-            # Apply practice area filter
-            if selected_practice_area != "All":
-                filtered_lawyers = [
-                    lawyer for lawyer in filtered_lawyers 
-                    if selected_practice_area in lawyer['practice_areas']
-                ]
-            
-            # Apply availability filter
-            if availability_filter:
-                temp_lawyers = []
-                for lawyer in filtered_lawyers:
-                    days = lawyer['days_available']
-                    try:
-                        days = float(days.split()[0])  # Extract number from "X days/week"
-                        if "High Availability (3+ days/week)" in availability_filter and days >= 3:
-                            temp_lawyers.append(lawyer)
-                        elif "Medium Availability (1-2 days/week)" in availability_filter and 1 <= days < 3:
-                            temp_lawyers.append(lawyer)
-                        elif "Limited Availability (<1 day/week)" in availability_filter and days < 1:
-                            temp_lawyers.append(lawyer)
-                    except (ValueError, AttributeError):
-                        continue
-                filtered_lawyers = temp_lawyers
-            
-            # Show lawyer cards
-            create_lawyer_cards(filtered_lawyers)
+
+        if clear:
+            st.session_state.query = ''
+            st.rerun()
+
+        if search and query:
+            st.session_state.query = query
+            with st.spinner("Finding the best matches..."):
+                # Filter lawyers based on selection
+                filtered_lawyers = lawyers_summary.copy()
+                
+                # Apply practice area filter
+                if selected_practice_area != "All":
+                    filtered_lawyers = [
+                        lawyer for lawyer in filtered_lawyers 
+                        if selected_practice_area in lawyer['practice_areas']
+                    ]
+                
+                # Apply availability filter
+                if availability_filter != "All":
+                    temp_lawyers = []
+                    for lawyer in filtered_lawyers:
+                        days = lawyer['days_available']
+                        try:
+                            days = float(days.split()[0])  # Extract number from "X days/week"
+                            if "High Availability" in availability_filter and days >= 3:
+                                temp_lawyers.append(lawyer)
+                            elif "Medium Availability" in availability_filter and 1 <= days < 3:
+                                temp_lawyers.append(lawyer)
+                            elif "Limited Availability" in availability_filter and days < 1:
+                                temp_lawyers.append(lawyer)
+                        except (ValueError, AttributeError):
+                            continue
+                    filtered_lawyers = temp_lawyers
+                
+                results = get_claude_response(query, filtered_lawyers)
+                if results:
+                    st.markdown("### Top Lawyer Matches")
+                    st.markdown(results)
+        
+        # Show card view at bottom
+        if st.checkbox("Show All Lawyers", False):
+            create_lawyer_cards(lawyers_summary)
             
     except FileNotFoundError as e:
         st.error("Could not find the required data files. Please check your data file locations.")
         if show_debug:
-            st.write("Error details:", str(e))
+            st.sidebar.write("Error details:", str(e))
         return
     except Exception as e:
         st.error("An error occurred while processing the data.")
         if show_debug:
-            st.write("Error details:", str(e))
+            st.sidebar.write("Error details:", str(e))
         return
 
 if __name__ == "__main__":
