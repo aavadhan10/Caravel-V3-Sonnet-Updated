@@ -325,7 +325,7 @@ def display_recommendations(query, lawyers_summary):
         else:
             st.warning("No matching lawyers found for your specific needs. Try adjusting your search criteria.")
 
-ef main():
+def main():
     st.title("🧑‍⚖️ Caravel Law Lawyer Matcher")
     
     try:
