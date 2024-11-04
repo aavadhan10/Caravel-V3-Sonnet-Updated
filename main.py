@@ -90,7 +90,6 @@ def create_lawyer_cards(lawyers_summary):
             {format_practice_areas(lawyer['experience']).replace('      •', '•')}
             """)
 
-                """)
 def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     """Create a concise summary of lawyer information"""
     if show_debug:
