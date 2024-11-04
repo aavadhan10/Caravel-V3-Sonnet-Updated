@@ -90,6 +90,7 @@ def create_lawyer_cards(lawyers_summary):
             {format_practice_areas(lawyer['experience']).replace('      •', '•')}
             """)
 
+                """)
 def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     """Create a concise summary of lawyer information"""
     if show_debug:
@@ -325,7 +326,7 @@ def display_recommendations(query, lawyers_summary):
         else:
             st.warning("No matching lawyers found for your specific needs. Try adjusting your search criteria.")
 
-def main():
+ef main():
     st.title("🧑‍⚖️ Caravel Law Lawyer Matcher")
     
     try:
@@ -480,4 +481,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
