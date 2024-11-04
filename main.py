@@ -16,62 +16,70 @@ load_dotenv()
 # Initialize Anthropic client
 anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
+def standardize_name(name):
+    """Standardize name format for matching"""
+    if pd.isna(name) or not isinstance(name, str):
+        return ""
+    
+    # Convert to string and clean
+    name = str(name).lower().strip()
+    
+    # Remove parenthetical contents
+    name = ' '.join([part for part in name.split() if '(' not in part and ')' not in part])
+    
+    # Remove middle names (keep first and last only)
+    name_parts = name.split()
+    if len(name_parts) > 2:
+        name = f"{name_parts[0]} {name_parts[-1]}"
+    
+    # Standardize hyphens
+    name = name.replace('- ', '-').replace(' -', '-')
+    
+    # Remove 's' from end of last name if present
+    last_name = name.split()[-1]
+    if last_name.endswith('s'):
+        name = f"{' '.join(name.split()[:-1])} {last_name[:-1]}"
+    
+    return name
+
 def clean_text_field(text):
     """Clean and standardize text fields"""
     if pd.isna(text) or not isinstance(text, str):
         return ""
     return text.strip()
 
-def prepare_lawyer_summary(availability_data, bios_data):
+def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     """Create a concise summary of lawyer information"""
-    # Debug prints
-    st.write("### Debug Information")
-    st.write("Initial data shapes:")
-    st.write(f"Availability data: {availability_data.shape}")
-    st.write(f"Bios data: {bios_data.shape}")
-    
-    # Clean and standardize name fields with debug output
-    st.write("\n### Name Processing Debug")
+    if show_debug:
+        st.write("### Debug Information")
+        st.write("Initial data shapes:")
+        st.write(f"Availability data: {availability_data.shape}")
+        st.write(f"Bios data: {bios_data.shape}")
     
     # Process availability data names
-    st.write("Processing availability data names...")
     availability_data['Original_Name'] = availability_data['What is your name?'].copy()
-    availability_data['Name'] = availability_data['What is your name?'].apply(lambda x: 
-        ' '.join(str(x).strip().split()).title() if pd.notna(x) else '')
+    availability_data['Standardized_Name'] = availability_data['What is your name?'].apply(standardize_name)
     
     # Process bios data names
-    st.write("Processing bios data names...")
     bios_data['Original_Name'] = bios_data['First Name'] + ' ' + bios_data['Last Name']
-    bios_data['Name'] = bios_data.apply(lambda x: 
-        ' '.join(f"{str(x['First Name'])} {str(x['Last Name'])}".strip().split()).title() 
-        if pd.notna(x['First Name']) and pd.notna(x['Last Name']) else '', axis=1)
+    bios_data['Standardized_Name'] = bios_data.apply(
+        lambda x: standardize_name(f"{x['First Name']} {x['Last Name']}"), axis=1)
     
-    # Display name comparison
-    st.write("\n### Name Matching Analysis")
-    st.write("\nAvailability Data Names:")
-    name_comparison = pd.DataFrame({
-        'Original': availability_data['Original_Name'],
-        'Processed': availability_data['Name']
-    })
-    st.write(name_comparison)
-    
-    st.write("\nBios Data Names:")
-    name_comparison_bios = pd.DataFrame({
-        'Original': bios_data['Original_Name'],
-        'Processed': bios_data['Name']
-    })
-    st.write(name_comparison_bios)
-    
-    # Show all unique processed names
-    st.write("\nUnique processed names in Availability Data:")
-    st.write(sorted(availability_data['Name'].unique()))
-    st.write("\nUnique processed names in Bios Data:")
-    st.write(sorted(bios_data['Name'].unique()))
-    
-    # Find common names
-    common_names = set(availability_data['Name']) & set(bios_data['Name'])
-    st.write(f"\nNumber of matching names: {len(common_names)}")
-    st.write("Matching names:", sorted(list(common_names)))
+    if show_debug:
+        st.write("\n### Name Standardization Results")
+        st.write("\nAvailability Data Names:")
+        name_comparison = pd.DataFrame({
+            'Original': availability_data['Original_Name'],
+            'Standardized': availability_data['Standardized_Name']
+        })
+        st.write(name_comparison)
+        
+        st.write("\nBios Data Names:")
+        name_comparison_bios = pd.DataFrame({
+            'Original': bios_data['Original_Name'],
+            'Standardized': bios_data['Standardized_Name']
+        })
+        st.write(name_comparison_bios)
     
     lawyers_summary = []
     capacity_column = 'Do you have capacity to take on new work?'
@@ -81,49 +89,37 @@ def prepare_lawyer_summary(availability_data, bios_data):
         availability_data[capacity_column].fillna('').str.lower().str.contains('yes|maybe|y|m', na=False)
     ]
     
-    st.write(f"\nNumber of available lawyers found: {len(available_lawyers)}")
+    if show_debug:
+        st.write(f"\nNumber of available lawyers found: {len(available_lawyers)}")
     
-    # Debug each lawyer matching attempt
-    st.write("\n### Matching Process Debug")
+    # Match lawyers using standardized names
     for _, row in available_lawyers.iterrows():
-        name = row['Name']
-        st.write(f"\nTrying to match: {name}")
+        std_name = row['Standardized_Name']
+        bio_row = bios_data[bios_data['Standardized_Name'] == std_name]
         
-        bio_row = bios_data[bios_data['Name'] == name]
-        if bio_row.empty:
-            st.write(f"No match found in bios for: {name}")
-            # Try fuzzy matching or alternative name formats
-            similar_names = bios_data[bios_data['Name'].str.contains(name.split()[0], na=False)]
-            if not similar_names.empty:
-                st.write(f"Similar names found: {similar_names['Name'].tolist()}")
-        else:
-            st.write(f"Match found for: {name}")
+        if not bio_row.empty:
+            if show_debug:
+                st.write(f"Match found: {row['Original_Name']} ↔ {bio_row.iloc[0]['Original_Name']}")
             bio_row = bio_row.iloc[0]
             
-            practice_areas = clean_text_field(bio_row.get('Area of Practise + Add Info', ''))
-            experience = clean_text_field(bio_row.get('Industry Experience', ''))
-            
-            days_available = clean_text_field(row.get(
-                'What is your capacity to take on new work for the forseeable future? Days per week', 
-                'Not specified'
-            ))
-            hours_available = clean_text_field(row.get(
-                'What is your capacity to take on new work for the foreseeable future? Hours per month',
-                'Not specified'
-            ))
-            
             summary = {
-                'name': name,
+                'name': row['Original_Name'],
                 'availability_status': clean_text_field(row[capacity_column]),
-                'practice_areas': practice_areas,
-                'experience': experience,
-                'days_available': days_available,
-                'hours_available': hours_available
+                'practice_areas': clean_text_field(bio_row.get('Area of Practise + Add Info', '')),
+                'experience': clean_text_field(bio_row.get('Industry Experience', '')),
+                'days_available': clean_text_field(row.get(
+                    'What is your capacity to take on new work for the forseeable future? Days per week', 
+                    'Not specified'
+                )),
+                'hours_available': clean_text_field(row.get(
+                    'What is your capacity to take on new work for the foreseeable future? Hours per month',
+                    'Not specified'
+                ))
             }
             lawyers_summary.append(summary)
     
-    st.write(f"\nFinal number of matched lawyers: {len(lawyers_summary)}")
-    
+    if show_debug:
+        st.write(f"\nFinal number of matched lawyers: {len(lawyers_summary)}")
     return lawyers_summary
 
 def format_practice_areas(practice_areas):
@@ -131,7 +127,6 @@ def format_practice_areas(practice_areas):
     if not practice_areas:
         return "Not specified"
     
-    # Split on common delimiters and clean up
     areas = []
     for delimiter in [',', ';', '\n']:
         if delimiter in practice_areas:
@@ -146,7 +141,6 @@ def format_practice_areas(practice_areas):
 def get_claude_response(query, lawyers_summary):
     """Get Claude's analysis of the best lawyer matches"""
     
-    # Create a detailed but structured summary of each lawyer
     summary_text = "Available Lawyers and Their Expertise:\n\n"
     for i, lawyer in enumerate(lawyers_summary, 1):
         summary_text += f"{i}. {lawyer['name']}\n"
@@ -157,31 +151,34 @@ def get_claude_response(query, lawyers_summary):
             summary_text += f"   Industry Experience:\n{format_practice_areas(lawyer['experience'])}\n"
         summary_text += "\n"
 
-    # Debug: Print the summary text
-    st.write("### Generated Lawyer Summary")
-    st.write(summary_text)
-
     prompt = f"""You are a legal staffing assistant at Caravel Law. Your task is to match client needs with available lawyers based on their expertise and availability.
 
 Client Need: {query}
 
 {summary_text}
 
-Please analyze the lawyers' profiles and provide recommendations based on the following criteria:
-1. Match the client's specific needs with lawyers' practice areas and experience
-2. Consider the lawyers' current availability
-3. If you find suitable matches:
-   - Recommend up to 3 lawyers, ranked by how well they match the requirements
-   - Explain specifically why each lawyer is a good match, citing their relevant expertise
-   - Include their availability details
-4. If no exact matches are found but there are lawyers with related expertise:
-   - Suggest these lawyers as potential alternatives
-   - Explain how their expertise might transfer to the client's needs
-5. If no suitable matches are found:
-   - Clearly explain what specific expertise was needed but not found
-   - Recommend next steps for the client
+Please analyze the lawyers' profiles and provide the best 3-7 matches, following these guidelines:
 
-Please be thorough in your analysis and specific in your recommendations."""
+1. Carefully evaluate each lawyer's practice areas and experience against the client's needs
+2. Consider their current availability
+3. Provide your recommendations in this format:
+   
+   Top Matches for Your Needs:
+
+   1. [Lawyer Name]
+      • Relevant Expertise: [List specific matching practice areas and experience]
+      • Availability: [Include availability details]
+      • Why They're a Good Fit: [Brief explanation]
+
+   [Repeat for each recommended lawyer]
+
+Important:
+- Recommend between 3-7 lawyers, ranked by best fit
+- Only include lawyers whose expertise truly matches the needs
+- Be specific about why each lawyer is a good match
+- If fewer than 3 strong matches exist, explain what expertise was needed but not found
+
+Remember to focus on clear, practical matches between the client's needs and lawyers' specific expertise."""
 
     try:
         response = anthropic.messages.create(
@@ -196,37 +193,37 @@ Please be thorough in your analysis and specific in your recommendations."""
         return response.content[0].text
         
     except Exception as e:
-        st.error(f"Claude API error: {str(e)}")
+        st.error(f"Error getting recommendations: {str(e)}")
         return None
 
 def main():
-    st.title("Caravel Law Lawyer Matcher")
+    st.title("🧑‍⚖️ Caravel Law Lawyer Matcher")
     
     try:
-        # Load the data files with explicit display of contents
-        st.write("### Loading Data Files")
-        
+        # Load the data files
         availability_data = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
-        st.write("Successfully loaded availability data")
-        
         bios_data = pd.read_csv('BD_Caravel.csv')
-        st.write("Successfully loaded bios data")
         
-        # Show full data preview
-        st.write("### Raw Data Preview")
-        st.write("Availability Data First Few Rows:")
-        st.write(availability_data.head())
-        st.write("\nBios Data First Few Rows:")
-        st.write(bios_data.head())
+        # Debug checkbox in sidebar
+        show_debug = st.sidebar.checkbox("Show Debug Information", False)
         
-        lawyers_summary = prepare_lawyer_summary(availability_data, bios_data)
+        if show_debug:
+            st.write("### Raw Data Preview")
+            st.write("Availability Data First Few Rows:")
+            st.write(availability_data.head())
+            st.write("\nBios Data First Few Rows:")
+            st.write(bios_data.head())
+        
+        lawyers_summary = prepare_lawyer_summary(availability_data, bios_data, show_debug)
         
         if not lawyers_summary:
             st.error("No available lawyers found in the system. Please check the data processing above.")
             return
         
-        # Example queries
         st.write("### How can we help you find the right lawyer?")
+        st.write("Tell us about your legal needs and we'll match you with the best available lawyers.")
+        
+        # Example queries
         examples = [
             "I need a lawyer with trademark and IP experience who can start work soon",
             "Looking for someone experienced in employment law to help with HR policies",
@@ -248,15 +245,15 @@ def main():
 
         # Custom query input
         query = st.text_area(
-            "Or describe what you're looking for:",
+            "Describe what you're looking for:",
             value=st.session_state.get('query', ''),
-            placeholder="Describe your legal needs...",
+            placeholder="Example: I need help with employment contracts and HR policies...",
             height=100
         )
 
         # Search and Clear buttons
         col1, col2 = st.columns([1, 4])
-        search = col1.button("Find Lawyers")
+        search = col1.button("🔎 Search")
         clear = col2.button("Clear")
 
         if clear:
@@ -268,18 +265,18 @@ def main():
             with st.spinner("Finding the best matches..."):
                 results = get_claude_response(query, lawyers_summary)
                 if results:
-                    st.markdown("### Recommendations")
+                    st.markdown("### Top Lawyer Matches")
                     st.markdown(results)
             
     except FileNotFoundError as e:
-        st.error(f"Could not find one or more data files: {str(e)}")
-        st.write("Please ensure the following files exist in the correct location:")
-        st.write("1. 'Caravel Law Availability - October 18th, 2024.csv'")
-        st.write("2. 'BD_Caravel.csv'")
+        st.error("Could not find the required data files. Please check your data file locations.")
+        if show_debug:
+            st.write("Error details:", str(e))
         return
     except Exception as e:
-        st.error(f"Error processing data files: {str(e)}")
-        st.write("Error details:", str(e))
+        st.error("An error occurred while processing the data.")
+        if show_debug:
+            st.write("Error details:", str(e))
         return
 
 if __name__ == "__main__":
