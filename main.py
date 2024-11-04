@@ -30,50 +30,79 @@ def prepare_lawyer_summary(availability_data, bios_data):
     st.write(f"Availability data: {availability_data.shape}")
     st.write(f"Bios data: {bios_data.shape}")
     
-    # Display column names
-    st.write("\nAvailability data columns:")
-    st.write(availability_data.columns.tolist())
-    st.write("\nBios data columns:")
-    st.write(bios_data.columns.tolist())
+    # Clean and standardize name fields with debug output
+    st.write("\n### Name Processing Debug")
     
-    # Debug: Show unique values in capacity column
-    capacity_column = 'Do you have capacity to take on new work?'
-    if capacity_column in availability_data.columns:
-        st.write("\nUnique values in capacity column:")
-        st.write(availability_data[capacity_column].unique())
+    # Process availability data names
+    st.write("Processing availability data names...")
+    availability_data['Original_Name'] = availability_data['What is your name?'].copy()
+    availability_data['Name'] = availability_data['What is your name?'].apply(lambda x: 
+        ' '.join(str(x).strip().split()).title() if pd.notna(x) else '')
     
-    # Clean and standardize name fields
-    availability_data['Name'] = availability_data['What is your name?'].apply(clean_text_field)
+    # Process bios data names
+    st.write("Processing bios data names...")
+    bios_data['Original_Name'] = bios_data['First Name'] + ' ' + bios_data['Last Name']
     bios_data['Name'] = bios_data.apply(lambda x: 
-        f"{clean_text_field(x['First Name'])} {clean_text_field(x['Last Name'])}", axis=1)
+        ' '.join(f"{str(x['First Name'])} {str(x['Last Name'])}".strip().split()).title() 
+        if pd.notna(x['First Name']) and pd.notna(x['Last Name']) else '', axis=1)
     
-    # Debug: Show some sample names
-    st.write("\nSample names from availability data:")
-    st.write(availability_data['Name'].head())
-    st.write("\nSample names from bios data:")
-    st.write(bios_data['Name'].head())
+    # Display name comparison
+    st.write("\n### Name Matching Analysis")
+    st.write("\nAvailability Data Names:")
+    name_comparison = pd.DataFrame({
+        'Original': availability_data['Original_Name'],
+        'Processed': availability_data['Name']
+    })
+    st.write(name_comparison)
+    
+    st.write("\nBios Data Names:")
+    name_comparison_bios = pd.DataFrame({
+        'Original': bios_data['Original_Name'],
+        'Processed': bios_data['Name']
+    })
+    st.write(name_comparison_bios)
+    
+    # Show all unique processed names
+    st.write("\nUnique processed names in Availability Data:")
+    st.write(sorted(availability_data['Name'].unique()))
+    st.write("\nUnique processed names in Bios Data:")
+    st.write(sorted(bios_data['Name'].unique()))
+    
+    # Find common names
+    common_names = set(availability_data['Name']) & set(bios_data['Name'])
+    st.write(f"\nNumber of matching names: {len(common_names)}")
+    st.write("Matching names:", sorted(list(common_names)))
     
     lawyers_summary = []
+    capacity_column = 'Do you have capacity to take on new work?'
     
-    # Get available lawyers with more lenient filtering
+    # Get available lawyers
     available_lawyers = availability_data[
         availability_data[capacity_column].fillna('').str.lower().str.contains('yes|maybe|y|m', na=False)
     ]
     
     st.write(f"\nNumber of available lawyers found: {len(available_lawyers)}")
     
+    # Debug each lawyer matching attempt
+    st.write("\n### Matching Process Debug")
     for _, row in available_lawyers.iterrows():
         name = row['Name']
-        bio_row = bios_data[bios_data['Name'] == name]
+        st.write(f"\nTrying to match: {name}")
         
-        if not bio_row.empty:
+        bio_row = bios_data[bios_data['Name'] == name]
+        if bio_row.empty:
+            st.write(f"No match found in bios for: {name}")
+            # Try fuzzy matching or alternative name formats
+            similar_names = bios_data[bios_data['Name'].str.contains(name.split()[0], na=False)]
+            if not similar_names.empty:
+                st.write(f"Similar names found: {similar_names['Name'].tolist()}")
+        else:
+            st.write(f"Match found for: {name}")
             bio_row = bio_row.iloc[0]
             
-            # Clean and process practice areas and experience
             practice_areas = clean_text_field(bio_row.get('Area of Practise + Add Info', ''))
             experience = clean_text_field(bio_row.get('Industry Experience', ''))
             
-            # Get availability details with proper error handling
             days_available = clean_text_field(row.get(
                 'What is your capacity to take on new work for the forseeable future? Days per week', 
                 'Not specified'
@@ -92,7 +121,7 @@ def prepare_lawyer_summary(availability_data, bios_data):
                 'hours_available': hours_available
             }
             lawyers_summary.append(summary)
-            
+    
     st.write(f"\nFinal number of matched lawyers: {len(lawyers_summary)}")
     
     return lawyers_summary
