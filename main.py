@@ -91,7 +91,7 @@ def create_lawyer_cards(lawyers_summary):
                 {format_practice_areas(lawyer['experience']).replace('      •', '•')}
                 """)
 def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
-    """Create a concise summary of lawyer information with improved matching"""
+    """Create a concise summary of lawyer information for ALL lawyers in bios"""
     if show_debug:
         st.sidebar.write("### Debug Information")
         st.sidebar.write(f"Initial data shapes - Availability: {availability_data.shape}, Bios: {bios_data.shape}")
@@ -100,22 +100,16 @@ def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     availability_data = availability_data.copy()
     bios_data = bios_data.copy()
     
-    # Enhanced name standardization
     def enhanced_standardize_name(name):
         if pd.isna(name) or not isinstance(name, str):
             return ""
         
         name = str(name).lower().strip()
-        # Remove parentheses and their contents
         name = ' '.join([part for part in name.split() if '(' not in part and ')' not in part])
-        # Remove suffixes like Jr., Sr., III, etc.
         suffixes = ['jr', 'sr', 'ii', 'iii', 'iv', 'esq', 'esquire']
         name_parts = [part for part in name.split() if part.replace('.', '') not in suffixes]
-        # Handle hyphenated names
         name = ' '.join(name_parts).replace('- ', '-').replace(' -', '-')
-        # Handle multi-part names more flexibly
         if len(name_parts) > 2:
-            # Try to keep middle initials
             if len(name_parts[1]) == 1 or (len(name_parts[1]) == 2 and name_parts[1].endswith('.')):
                 name = f"{name_parts[0]} {name_parts[1]} {name_parts[-1]}"
             else:
@@ -130,53 +124,61 @@ def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     bios_data['Standardized_Name'] = bios_data.apply(
         lambda x: enhanced_standardize_name(f"{x['First Name']} {x['Last Name']}"), axis=1)
     
-    # More lenient availability check
     def check_availability(row):
+        if pd.isna(row).all():  # If no availability data
+            return False
+            
         capacity_col = 'Do you have capacity to take on new work?'
         days_col = 'What is your capacity to take on new work for the forseeable future? Days per week'
         hours_col = 'What is your capacity to take on new work for the foreseeable future? Hours per month'
         
-        # Check capacity response
         capacity = str(row.get(capacity_col, '')).lower()
         has_capacity = any(word in capacity for word in ['yes', 'maybe', 'y', 'm', 'limited'])
         
-        # Check days available
         days = str(row.get(days_col, '0'))
         has_days = any(char.isdigit() and char != '0' for char in days)
         
-        # Check hours available
         hours = str(row.get(hours_col, '0'))
         has_hours = any(char.isdigit() and char != '0' for char in hours)
         
         return has_capacity or has_days or has_hours
     
     lawyers_summary = []
+    matched_count = 0
+    available_count = 0
     
-    # Process each lawyer in bios
+    # Process ALL lawyers in bios
     for _, bio_row in bios_data.iterrows():
         std_name = bio_row['Standardized_Name']
         
         # Try exact match first
         avail_matches = availability_data[availability_data['Standardized_Name'] == std_name]
         
-        # If no exact match, try fuzzy matching on standardized names
+        # If no exact match, try fuzzy matching
         if avail_matches.empty:
             bio_parts = set(std_name.split())
             for _, avail_row in availability_data.iterrows():
                 avail_parts = set(avail_row['Standardized_Name'].split())
-                # Match if all parts of shorter name are in longer name
                 if bio_parts.issubset(avail_parts) or avail_parts.issubset(bio_parts):
                     avail_matches = pd.DataFrame([avail_row])
                     break
         
+        # Initialize default values for availability fields
+        availability_info = {
+            'availability_status': 'No availability data',
+            'days_available': 'Not specified',
+            'hours_available': 'Not specified'
+        }
+        
+        # Update with actual availability if we have it
         if not avail_matches.empty:
+            matched_count += 1
             avail_row = avail_matches.iloc[0]
+            
             if check_availability(avail_row):
-                summary = {
-                    'name': bio_row['Original_Name'],
+                available_count += 1
+                availability_info = {
                     'availability_status': clean_text_field(avail_row.get('Do you have capacity to take on new work?', '')),
-                    'practice_areas': clean_text_field(bio_row.get('Area of Practise + Add Info', '')),
-                    'experience': clean_text_field(bio_row.get('Industry Experience', '')),
                     'days_available': clean_text_field(avail_row.get(
                         'What is your capacity to take on new work for the forseeable future? Days per week', 
                         'Not specified'
@@ -186,15 +188,26 @@ def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
                         'Not specified'
                     ))
                 }
-                lawyers_summary.append(summary)
-        elif show_debug:
-            st.sidebar.write(f"No availability match found for: {bio_row['Original_Name']}")
+            else:
+                availability_info['availability_status'] = 'Not currently available'
+        
+        # Create summary for ALL lawyers, regardless of availability
+        summary = {
+            'name': bio_row['Original_Name'],
+            'availability_status': availability_info['availability_status'],
+            'practice_areas': clean_text_field(bio_row.get('Area of Practise + Add Info', '')),
+            'experience': clean_text_field(bio_row.get('Industry Experience', '')),
+            'days_available': availability_info['days_available'],
+            'hours_available': availability_info['hours_available']
+        }
+        lawyers_summary.append(summary)
     
     if show_debug:
         st.sidebar.write(f"\nMatching Statistics:")
         st.sidebar.write(f"Total lawyers in bios: {len(bios_data)}")
-        st.sidebar.write(f"Lawyers with availability data: {len(availability_data)}")
-        st.sidebar.write(f"Successfully matched lawyers: {len(lawyers_summary)}")
+        st.sidebar.write(f"Lawyers with availability data: {matched_count}")
+        st.sidebar.write(f"Lawyers marked as available: {available_count}")
+        st.sidebar.write(f"Total lawyers in summary: {len(lawyers_summary)}")
     
     return lawyers_summary
 def get_claude_response(query, lawyers_summary):
