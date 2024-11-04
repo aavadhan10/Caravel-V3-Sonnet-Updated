@@ -92,14 +92,13 @@ def create_lawyer_cards(lawyers_summary):
                 """)
     def prepare_lawyer_summary(availability_data, bios_data, show_debug=False):
     """Create a concise summary of lawyer information"""
-    if show_debug:
-        st.sidebar.write("### Debug Information")
-        st.sidebar.write("Initial data shapes:")
-        st.sidebar.write(f"Availability data: {availability_data.shape}")
-        st.sidebar.write(f"Bios data: {bios_data.shape}")
-        st.sidebar.write("\nBios data unique lawyers:", len(bios_data))
-    
-    # Copy original data to avoid modifications
+        if show_debug:
+            st.sidebar.write("### Debug Information")
+            st.sidebar.write("Initial data shapes:")
+            st.sidebar.write(f"Availability data: {availability_data.shape}")
+            st.sidebar.write(f"Bios data: {bios_data.shape}")
+            st.sidebar.write("\nBios data unique lawyers:", len(bios_data))
+          # Copy original data to avoid modifications
     availability_data = availability_data.copy()
     bios_data = bios_data.copy()
     
@@ -197,6 +196,8 @@ def create_lawyer_cards(lawyers_summary):
         st.sidebar.write(f"- Final lawyer count: {len(lawyers_summary)}")
     
     return lawyers_summary
+    
+  
 
 def get_claude_response(query, lawyers_summary):
     """Get Claude's analysis of the best lawyer matches"""
