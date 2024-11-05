@@ -8,6 +8,15 @@ import os
 load_dotenv()
 anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
+# Constants for column names that we know exist
+COLUMNS = ['Attorney', 'Work Email', 'Education', 'Summary and Expertise']
+
+def load_data():
+    """Load and validate data"""
+    df = pd.read_csv('Cleaned_Matters_OGC.csv')
+    # Ensure we only use columns that exist
+    return df[COLUMNS]
+
 def get_practice_areas(lawyers_df):
     """Extract unique practice areas from Summary and Expertise"""
     all_areas = set()
@@ -114,12 +123,12 @@ def main():
     
     try:
         # Load the data file
-        lawyers_df = pd.read_csv('Cleaned_Matters_OGC.csv')
+        lawyers_df = load_data()
         
-        # Move filters to sidebar
+        # Sidebar filters
         st.sidebar.title("Filters")
         
-        # Get unique practice areas from Summary and Expertise
+        # Get unique practice areas
         practice_areas = []
         for expertise in lawyers_df['Summary and Expertise'].dropna():
             practice_areas.extend([area.strip() for area in expertise.split(',')])
@@ -135,7 +144,7 @@ def main():
         st.write("### How can we help you find the right lawyer?")
         st.write("Tell us about your legal needs and we'll match you with the best available lawyers.")
         
-        # Example queries based on actual practice areas
+        # Example queries
         examples = [
             "I need a lawyer experienced in intellectual property and software licensing",
             "Looking for someone who handles business startups and corporate governance",
@@ -143,7 +152,7 @@ def main():
             "Who would be best for mergers and acquisitions in the technology sector?"
         ]
         
-        # Example query buttons in two columns
+        # Example query buttons
         col1, col2 = st.columns(2)
         for i, example in enumerate(examples):
             if i % 2 == 0:
@@ -179,7 +188,7 @@ def main():
             st.session_state.query = ''
             st.rerun()
 
-        # Show current filters and counts
+        # Show counts
         st.sidebar.markdown("---")
         st.sidebar.markdown(f"**Showing:** {len(filtered_df)} lawyers")
         
