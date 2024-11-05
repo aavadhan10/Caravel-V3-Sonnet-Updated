@@ -3,20 +3,13 @@ import pandas as pd
 from anthropic import Anthropic
 from dotenv import load_dotenv
 import os
-import logging
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Load environment variables
+# Load environment variables and setup Anthropic
 load_dotenv()
-
-# Initialize Anthropic client
 anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
 def get_practice_areas(lawyers_df):
-    """Extract unique practice areas from lawyers summary"""
+    """Extract unique practice areas from Summary and Expertise"""
     all_areas = set()
     for areas in lawyers_df['Summary and Expertise'].dropna():
         areas_list = [area.strip() for area in areas.split(',')]
@@ -72,16 +65,11 @@ Education: Harvard Law School J.D.
 Recommendation Reason: Extensive experience in corporate transactions with emphasis on technology sector
 MATCH_END
 
-MATCH_START
-Rank: 2
-[Continue with next match]
-
 Important guidelines:
 - Provide 3-5 matches only
 - Keep the Recommendation Reason specific but concise (max 150 characters)
-- Focus on concrete experience and specific expertise that matches the client's needs
-- Use the exact delimiters shown above
-- Only include lawyers whose expertise truly matches the needs"""
+- Focus on matching expertise to the client's specific needs
+- Use the exact delimiters shown above"""
 
     try:
         response = anthropic.messages.create(
@@ -98,7 +86,7 @@ Important guidelines:
         return None
 
 def parse_claude_response(response):
-    """Parse Claude's response into a structured format for table display"""
+    """Parse Claude's response into a structured format"""
     matches = []
     for match in response.split('MATCH_START')[1:]:
         match_data = {}
@@ -121,50 +109,6 @@ def parse_claude_response(response):
     
     return df
 
-def display_recommendations(query, lawyers_df):
-    """Display lawyer recommendations in a formatted table"""
-    with st.spinner("Finding the best matches..."):
-        results_df = get_claude_response(query, lawyers_df)
-        
-        if results_df is not None and not results_df.empty:
-            st.markdown("### 🎯 Top Lawyer Matches")
-            
-            st.dataframe(
-                results_df,
-                column_config={
-                    "Rank": st.column_config.NumberColumn(
-                        "Rank",
-                        help="Match ranking",
-                        format="%d",
-                        width="small"
-                    ),
-                    "Name": st.column_config.Column(
-                        "Name",
-                        help="Lawyer name",
-                        width="medium"
-                    ),
-                    "Key Expertise": st.column_config.Column(
-                        "Key Expertise",
-                        help="Relevant areas of expertise",
-                        width="large"
-                    ),
-                    "Education": st.column_config.Column(
-                        "Education",
-                        help="Educational background",
-                        width="medium"
-                    ),
-                    "Recommendation Reason": st.column_config.Column(
-                        "Recommendation Reason",
-                        help="Why this lawyer is specifically recommended for your needs",
-                        width="large"
-                    )
-                },
-                hide_index=True,
-                use_container_width=True
-            )
-        else:
-            st.warning("No matching lawyers found for your specific needs. Try adjusting your search criteria.")
-
 def main():
     st.title("🧑‍⚖️ Outside GC Lawyer Matcher")
     
@@ -174,13 +118,6 @@ def main():
         
         # Move filters to sidebar
         st.sidebar.title("Filters")
-        
-        # Debug checkbox in sidebar
-        show_debug = st.sidebar.checkbox("Show Debug Information", False)
-        
-        if show_debug:
-            st.sidebar.write("### Data Preview")
-            st.sidebar.write(lawyers_df.head())
         
         # Get unique practice areas from Summary and Expertise
         practice_areas = []
@@ -218,11 +155,8 @@ def main():
                     st.session_state.query = example
                     st.rerun()
 
-        st.write("")
-        
         # Filter lawyers based on selection
         filtered_df = lawyers_df.copy()
-        
         if selected_practice_area != "All":
             filtered_df = filtered_df[
                 filtered_df['Summary and Expertise'].str.contains(selected_practice_area, na=False, case=False)
@@ -230,16 +164,16 @@ def main():
         
         # Custom query input
         query = st.text_area(
-            "For more specific matching, describe what you're looking for (optional):",
+            "For more specific matching, describe what you're looking for:",
             value=st.session_state.get('query', ''),
             placeholder="Example: I need help with intellectual property and software licensing...",
             height=100
         )
 
         # Search and Clear buttons
-        button_col1, button_col2 = st.columns([1, 4])
-        search = button_col1.button("🔎 Search")
-        clear = button_col2.button("Clear")
+        col1, col2 = st.columns([1, 4])
+        search = col1.button("🔎 Search")
+        clear = col2.button("Clear")
 
         if clear:
             st.session_state.query = ''
@@ -247,29 +181,18 @@ def main():
 
         # Show current filters and counts
         st.sidebar.markdown("---")
-        st.sidebar.markdown("### Current Filters")
-        st.sidebar.markdown(f"**Practice Area:** {selected_practice_area}")
-        st.sidebar.markdown(f"**Total Lawyers:** {len(filtered_df)}")
-
-        # Show Claude's recommendations when search is used
-        if search and query:
-            st.session_state.query = query
-            display_recommendations(query, filtered_df)
+        st.sidebar.markdown(f"**Showing:** {len(filtered_df)} lawyers")
         
-        # Show all lawyers if no filters are applied and no search is performed
-        if not (search and query):
+        # Show recommendations or all lawyers
+        if search and query:
+            display_recommendations(query, filtered_df)
+        else:
             create_lawyer_cards(filtered_df)
             
-    except FileNotFoundError as e:
-        st.error("Could not find the required data file. Please check your data file location.")
-        if show_debug:
-            st.sidebar.write("Error details:", str(e))
-        return
+    except FileNotFoundError:
+        st.error("Could not find the required data file. Please check the file location.")
     except Exception as e:
-        st.error("An error occurred while processing the data.")
-        if show_debug:
-            st.sidebar.write("Error details:", str(e))
-        return
+        st.error(f"An error occurred: {str(e)}")
 
 if __name__ == "__main__":
     main()
