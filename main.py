@@ -15,12 +15,6 @@ load_dotenv()
 # Initialize Anthropic client
 anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
-def clean_text_field(text):
-    """Clean and standardize text fields"""
-    if pd.isna(text) or not isinstance(text, str):
-        return ""
-    return text.strip()
-
 def get_practice_areas(lawyers_df):
     """Extract unique practice areas from lawyers summary"""
     all_areas = set()
@@ -44,14 +38,14 @@ def create_lawyer_cards(lawyers_df):
         with cols[idx % 3]:
             with st.expander(f"🧑‍⚖️ {lawyer['Attorney']}", expanded=False):
                 st.markdown(f"""
-                **Email:**  
+                **Contact:**  
                 {lawyer['Work Email']}
                 
                 **Education:**  
                 {lawyer['Education']}
                 
-                **Areas of Expertise:**  
-                {' • '.join(lawyer['Summary and Expertise'].split(', '))}
+                **Expertise:**  
+                • {lawyer['Summary and Expertise'].replace(', ', '\n• ')}
                 """)
 
 def get_claude_response(query, lawyers_df):
@@ -62,7 +56,7 @@ def get_claude_response(query, lawyers_df):
         summary_text += f"  Education: {lawyer['Education']}\n"
         summary_text += f"  Expertise: {lawyer['Summary and Expertise']}\n\n"
 
-    prompt = f"""You are a legal staffing assistant. Your task is to match client needs with available lawyers based on their expertise and education.
+    prompt = f"""You are a legal staffing assistant. Your task is to match client needs with available lawyers based on their expertise and background.
 
 Client Need: {query}
 
@@ -75,7 +69,7 @@ Rank: 1
 Name: John Smith
 Key Expertise: Corporate Law, M&A
 Education: Harvard Law School J.D.
-Recommendation Reason: 15+ years handling similar corporate transactions with emphasis on tech sector
+Recommendation Reason: Extensive experience in corporate transactions with emphasis on technology sector
 MATCH_END
 
 MATCH_START
@@ -172,7 +166,7 @@ def display_recommendations(query, lawyers_df):
             st.warning("No matching lawyers found for your specific needs. Try adjusting your search criteria.")
 
 def main():
-    st.title("🧑‍⚖️ Legal Counsel Matcher")
+    st.title("🧑‍⚖️ Outside GC Lawyer Matcher")
     
     try:
         # Load the data file
@@ -188,23 +182,28 @@ def main():
             st.sidebar.write("### Data Preview")
             st.sidebar.write(lawyers_df.head())
         
-        # Get all unique practice areas
-        all_practice_areas = get_practice_areas(lawyers_df)
+        # Get unique practice areas from Summary and Expertise
+        practice_areas = []
+        for expertise in lawyers_df['Summary and Expertise'].dropna():
+            practice_areas.extend([area.strip() for area in expertise.split(',')])
+        practice_areas = sorted(list(set(practice_areas)))
+        
+        # Practice area filter
         selected_practice_area = st.sidebar.selectbox(
             "Practice Area",
-            ["All"] + all_practice_areas
+            ["All"] + practice_areas
         )
         
         # Main content area
         st.write("### How can we help you find the right lawyer?")
         st.write("Tell us about your legal needs and we'll match you with the best available lawyers.")
         
-        # Example queries
+        # Example queries based on actual practice areas
         examples = [
-            "I need a lawyer with intellectual property experience for software licensing",
-            "Looking for someone experienced in business startups and corporate governance",
-            "Need a lawyer experienced with data privacy and cybersecurity",
-            "Who would be best for technology transactions and SaaS agreements?"
+            "I need a lawyer experienced in intellectual property and software licensing",
+            "Looking for someone who handles business startups and corporate governance",
+            "Need help with technology transactions and SaaS agreements",
+            "Who would be best for mergers and acquisitions in the technology sector?"
         ]
         
         # Example query buttons in two columns
@@ -226,7 +225,7 @@ def main():
         
         if selected_practice_area != "All":
             filtered_df = filtered_df[
-                filtered_df['Summary and Expertise'].str.contains(selected_practice_area, na=False)
+                filtered_df['Summary and Expertise'].str.contains(selected_practice_area, na=False, case=False)
             ]
         
         # Custom query input
@@ -246,7 +245,7 @@ def main():
             st.session_state.query = ''
             st.rerun()
 
-        # Show filtered results counts
+        # Show current filters and counts
         st.sidebar.markdown("---")
         st.sidebar.markdown("### Current Filters")
         st.sidebar.markdown(f"**Practice Area:** {selected_practice_area}")
