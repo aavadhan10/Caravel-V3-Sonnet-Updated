@@ -330,7 +330,7 @@ def main():
     
     try:
         # Load the data files
-        availability_data = pd.read_csv('Caravel Law Availability - October 18th, 2024.csv')
+        availability_data = pd.read_csv('Corrected_Caravel_Law_Availability.csv')
         bios_data = pd.read_csv('BD_Caravel.csv')
         
         # Move filters to sidebar
