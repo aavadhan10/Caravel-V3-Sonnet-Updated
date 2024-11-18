@@ -38,7 +38,7 @@ def create_lawyer_cards(lawyers_df):
     for idx, (_, lawyer) in enumerate(lawyers_df.iterrows()):
         with cols[idx % 3]:
             with st.expander(f"🧑‍⚖️ {lawyer['Attorney']}", expanded=False):
-                st.markdown(f"""
+                markdown_content = f"""
                 **Contact:**  
                 {lawyer['Work Email']}
 
@@ -46,8 +46,9 @@ def create_lawyer_cards(lawyers_df):
                 {lawyer['Education']}
 
                 **Expertise:**  
-                • {lawyer['Summary and Expertise'].replace(', ', '  \n• ')}
-                """)
+                • {lawyer['Summary and Expertise'].replace(', ', '\n• ')}
+                """
+                st.markdown(markdown_content)
 
 def get_claude_response(query, lawyers_df):
     """Get Claude's analysis of the best lawyer matches"""
