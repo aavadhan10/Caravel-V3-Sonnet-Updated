@@ -230,8 +230,8 @@ def get_claude_response(query, lawyers_summary):
     prompt = f"""You are a legal staffing assistant at Caravel Law. Your task is to match client needs with available lawyers based on their expertise and availability.
 Client Need: {query}
 {summary_text}
-Please analyze the lawyers' profiles and provide the best 3-5 matches in a structured format suitable for creating a table. Format your response exactly like this example, maintaining the exact delimiter structure:
-Please analyze the lawyers' profiles and provide the best 3-7 matches in a structured format suitable for creating a table. Format your response exactly like this example, maintaining the exact delimiter structure:
+Please analyze the lawyers profiles and provide the best 3-5 matches in a structured format suitable for creating a table. Format your response exactly like this example, maintaining the exact delimiter structure:
+Please analyze the lawyers profiles and provide the best 3-7 matches in a structured format suitable for creating a table. Format your response exactly like this example, maintaining the exact delimiter structure:
 MATCH_START
 Rank: 1
 Name: John Smith
