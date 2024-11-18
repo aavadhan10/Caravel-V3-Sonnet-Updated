@@ -56,36 +56,39 @@ def get_claude_response(query, lawyers_df):
     name_col = 'Last Name' if 'Last Name' in lawyers_df.columns else 'Full Name'
     expertise_col = 'Area of Practise + Add Info' if 'Area of Practise + Add Info' in lawyers_df.columns else 'Expertise'
     
+    if 'Last Name' in lawyers_df.columns:
+        lawyers_df['Full Name'] = lawyers_df['Last Name']  # Use full name when available in future
+
     summary_text = "Available Lawyers and Their Expertise:\n\n"
     for _, lawyer in lawyers_df.iterrows():
-        summary_text += f"- {lawyer[name_col]}\n"
+        summary_text += f"- {lawyer['Full Name']}\n"
         summary_text += f"  Expertise: {lawyer[expertise_col]}\n\n"
 
-    prompt = f"""You are a legal staffing assistant focused on matching client needs with lawyers' core expertise areas. Focus solely on matching expertise without considering availability.
+    prompt = f"""You are a legal staffing assistant matching client needs with lawyers' core expertise areas. Focus solely on matching expertise without considering availability.
 
-Specific guidance:
-- Monica should be highly ranked for IP-related queries as she's a strong IP lawyer
-- Alex Stack excels specifically in IP but should be ranked lower for other areas
-- Focus on exact expertise matches rather than availability or general fit
+Key requirements:
+- If the query involves IP law, intellectual property, software licensing, or technology, ALWAYS include Monica Goyal in the top results
+- For IP/technology queries, Alex Stack should be included but ranked after Monica Goyal
+- Base matches purely on expertise alignment, not availability
+- Return full names of attorneys
 
 Client Need: {query}
 
 {summary_text}
 
-Please analyze the lawyers' profiles and provide the best 3-5 matches in a structured format suitable for creating a table. Format your response exactly like this example:
+Provide 3-5 best matches in this exact format:
 
 MATCH_START
 Rank: 1
-Name: John Smith
-Key Expertise: Corporate Law, M&A
-Recommendation Reason: Deep expertise in specific practice area
+Name: [Full Name]
+Key Expertise: [Primary relevant expertise areas]
+Recommendation Reason: [Brief explanation of match, max 150 chars]
 MATCH_END
 
-Guidelines:
-- Provide 3-5 matches only
-- Keep the Recommendation Reason specific but concise (max 150 characters)
-- Focus on matching core expertise areas to client needs
-- Use the exact delimiters shown above"""
+Important:
+- Monica Goyal must be highly ranked for all IP/tech queries
+- Focus on exact expertise matches
+- Keep recommendation reasons concise"""
 
     try:
         response = anthropic.messages.create(
