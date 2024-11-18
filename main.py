@@ -4,12 +4,10 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 import os
 
-# Load environment variables and setup Anthropic
 load_dotenv()
 anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
 def load_data():
-    """Load and validate data"""
     try:
         df = pd.read_csv('BD_Caravel.csv')
         return df[['Last Name', 'Level/Title', 'Area of Practise + Add Info']]
@@ -21,7 +19,6 @@ def load_data():
         return df[['Full Name', 'Expertise', 'Availability']]
 
 def get_practice_areas(lawyers_df):
-    """Extract unique practice areas from expertise"""
     expertise_col = 'Area of Practise + Add Info' if 'Area of Practise + Add Info' in lawyers_df.columns else 'Expertise'
     all_areas = set()
     for areas in lawyers_df[expertise_col].dropna():
@@ -56,7 +53,6 @@ def create_lawyer_cards(lawyers_df):
                 st.markdown(content)
 
 def get_claude_response(query, lawyers_df):
-    """Get Claude's analysis of the best lawyer matches"""
     name_col = 'Last Name' if 'Last Name' in lawyers_df.columns else 'Full Name'
     expertise_col = 'Area of Practise + Add Info' if 'Area of Practise + Add Info' in lawyers_df.columns else 'Expertise'
     
@@ -88,7 +84,7 @@ Important guidelines:
 
     try:
         response = anthropic.messages.create(
-            model="claude-3-sonnet-20240229",
+            model="claude-3-5-sonnet-20241022",
             max_tokens=1500,
             messages=[{
                 "role": "user",
@@ -101,7 +97,6 @@ Important guidelines:
         return None
 
 def parse_claude_response(response):
-    """Parse Claude's response into a structured format"""
     matches = []
     for match in response.split('MATCH_START')[1:]:
         match_data = {}
@@ -125,7 +120,6 @@ def parse_claude_response(response):
     return df
 
 def display_recommendations(query, filtered_df):
-    """Display Claude's recommendations"""
     matches_df = get_claude_response(query, filtered_df)
     if matches_df is not None and not matches_df.empty:
         st.write("### 🎯 Top Matches")
@@ -137,7 +131,6 @@ def main():
     
     try:
         lawyers_df = load_data()
-        
         st.sidebar.title("Filters")
         
         practice_areas = get_practice_areas(lawyers_df)
