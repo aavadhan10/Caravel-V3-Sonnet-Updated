@@ -25,7 +25,6 @@ def get_practice_areas(lawyers_df):
     return sorted(list(all_areas))
 
 def create_lawyer_cards(lawyers_df):
-    """Create card layout for lawyers"""
     if lawyers_df.empty:
         st.warning("No lawyers match the selected filters.")
         return
@@ -38,17 +37,14 @@ def create_lawyer_cards(lawyers_df):
     for idx, (_, lawyer) in enumerate(lawyers_df.iterrows()):
         with cols[idx % 3]:
             with st.expander(f"🧑‍⚖️ {lawyer['Attorney']}", expanded=False):
-                markdown_content = f"""
-                **Contact:**  
-                {lawyer['Work Email']}
-
-                **Education:**  
-                {lawyer['Education']}
-
-                **Expertise:**  
-                • {lawyer['Summary and Expertise'].replace(', ', '\n• ')}
-                """
-                st.markdown(markdown_content)
+                st.markdown(
+                    f"**Contact:**\n"
+                    f"{lawyer['Work Email']}\n\n"
+                    f"**Education:**\n"
+                    f"{lawyer['Education']}\n\n"
+                    f"**Expertise:**\n"
+                    f"• {lawyer['Summary and Expertise'].replace(', ', '\n• ')}"
+                )
 
 def get_claude_response(query, lawyers_df):
     """Get Claude's analysis of the best lawyer matches"""
