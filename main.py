@@ -14,7 +14,6 @@ COLUMNS = ['Attorney', 'Work Email', 'Education', 'Summary and Expertise']
 def load_data():
     """Load and validate data"""
     df = pd.read_csv('Cleaned_Matters_OGC.csv')
-    # Ensure we only use columns that exist
     return df[COLUMNS]
 
 def get_practice_areas(lawyers_df):
@@ -42,12 +41,12 @@ def create_lawyer_cards(lawyers_df):
                 st.markdown(f"""
                 **Contact:**  
                 {lawyer['Work Email']}
-                
+
                 **Education:**  
                 {lawyer['Education']}
-                
+
                 **Expertise:**  
-                • {lawyer['Summary and Expertise'].replace(', ', '\n• ')}
+                • {lawyer['Summary and Expertise'].replace(', ', '  \n• ')}
                 """)
 
 def get_claude_response(query, lawyers_df):
@@ -117,6 +116,14 @@ def parse_claude_response(response):
         df = df.sort_values('Rank')
     
     return df
+
+def display_recommendations(query, filtered_df):
+    """Display Claude's recommendations"""
+    matches_df = get_claude_response(query, filtered_df)
+    if matches_df is not None and not matches_df.empty:
+        st.write("### 🎯 Top Matches")
+        st.dataframe(matches_df)
+        st.markdown("---")
 
 def main():
     st.title("🧑‍⚖️ Outside GC Lawyer Matcher")
