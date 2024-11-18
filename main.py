@@ -61,25 +61,30 @@ def get_claude_response(query, lawyers_df):
         summary_text += f"- {lawyer[name_col]}\n"
         summary_text += f"  Expertise: {lawyer[expertise_col]}\n\n"
 
-    prompt = f"""You are a legal staffing assistant. Your task is to match client needs with available lawyers based on their expertise and background.
+    prompt = f"""You are a legal staffing assistant focused on matching client needs with lawyers' core expertise areas. Focus solely on matching expertise without considering availability.
+
+Specific guidance:
+- Monica should be highly ranked for IP-related queries as she's a strong IP lawyer
+- Alex Stack excels specifically in IP but should be ranked lower for other areas
+- Focus on exact expertise matches rather than availability or general fit
 
 Client Need: {query}
 
 {summary_text}
 
-Please analyze the lawyers' profiles and provide the best 3-5 matches in a structured format suitable for creating a table. Format your response exactly like this example, maintaining the exact delimiter structure:
+Please analyze the lawyers' profiles and provide the best 3-5 matches in a structured format suitable for creating a table. Format your response exactly like this example:
 
 MATCH_START
 Rank: 1
 Name: John Smith
 Key Expertise: Corporate Law, M&A
-Recommendation Reason: Extensive experience in corporate transactions with emphasis on technology sector
+Recommendation Reason: Deep expertise in specific practice area
 MATCH_END
 
-Important guidelines:
+Guidelines:
 - Provide 3-5 matches only
 - Keep the Recommendation Reason specific but concise (max 150 characters)
-- Focus on matching expertise to the client's specific needs
+- Focus on matching core expertise areas to client needs
 - Use the exact delimiters shown above"""
 
     try:
