@@ -13,7 +13,10 @@ COLUMNS = ['Attorney', 'Work Email', 'Education', 'Summary and Expertise']
 
 def load_data():
     """Load and validate data"""
-    df = pd.read_csv('Cleaned_Matters_OGC.csv')
+    try:
+        df = pd.read_csv('BD_Caravel.csv')
+    except FileNotFoundError:
+        df = pd.read_csv('Corrected_Caravel_Law_Availability.csv')
     return df[COLUMNS]
 
 def get_practice_areas(lawyers_df):
