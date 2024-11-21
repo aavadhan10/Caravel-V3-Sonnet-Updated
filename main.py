@@ -10,13 +10,13 @@ anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
 def load_data():
     df = pd.read_csv('BD_Caravel.csv')
-    return df[['Last Name', 'Level/Title', 'Area of Practise + Add Info']]
+    return df[['First Name', 'Last Name', 'Level/Title', 'Area of Practise + Add Info']]
 
 def format_lawyers_data(lawyers_df):
     lawyers_data = []
     for _, row in lawyers_df.iterrows():
         lawyer = {
-            "name": row['Last Name'],
+            "name": f"{row['First Name']} {row['Last Name']}",
             "title": row['Level/Title'],
             "expertise": [area.strip() for area in str(row['Area of Practise + Add Info']).split(',')]
         }
@@ -40,6 +40,7 @@ REQUIREMENTS:
 - For IP/tech queries: Include Alex Stack after Monica Goyal
 - Sort matches by expertise relevance to query
 - Maximum 5 matches
+- Use full names (first and last) for all lawyers
 
 Respond in this exact format:
 
@@ -117,9 +118,9 @@ def create_lawyer_cards(lawyers_df):
     
     for idx, (_, lawyer) in enumerate(lawyers_df.iterrows()):
         with cols[idx % 3]:
-            with st.expander(f"🧑‍⚖️ {lawyer['Last Name']}", expanded=False):
+            with st.expander(f"🧑‍⚖️ {lawyer['First Name']} {lawyer['Last Name']}", expanded=False):
                 content = "**Name:**\n"
-                content += f"{lawyer['Last Name']}\n\n"
+                content += f"{lawyer['First Name']} {lawyer['Last Name']}\n\n"
                 content += "**Title:**\n"
                 content += f"{lawyer['Level/Title']}\n\n"
                 content += "**Expertise:**\n"
