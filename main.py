@@ -13,7 +13,6 @@ def load_data():
     return df[['Last Name', 'Level/Title', 'Area of Practise + Add Info']]
 
 def format_lawyers_data(lawyers_df):
-    """Format lawyer data as structured JSON for Claude"""
     lawyers_data = []
     for _, row in lawyers_df.iterrows():
         lawyer = {
@@ -65,20 +64,16 @@ Respond in this exact format:
         return None
 
 def parse_claude_response(response):
-    """Parse Claude's XML response into a DataFrame"""
     try:
-        # Extract content between <matches> tags
         import re
         matches_content = re.search(r'<matches>(.*?)</matches>', response, re.DOTALL)
         if not matches_content:
             return pd.DataFrame()
             
-        # Parse individual matches
         matches = []
         for match in re.finditer(r'<match>(.*?)</match>', matches_content.group(1), re.DOTALL):
             match_content = match.group(1)
             
-            # Extract fields
             rank = re.search(r'<rank>(.*?)</rank>', match_content).group(1)
             name = re.search(r'<name>(.*?)</name>', match_content).group(1)
             expertise = re.search(r'<expertise>(.*?)</expertise>', match_content).group(1)
@@ -123,16 +118,13 @@ def create_lawyer_cards(lawyers_df):
     for idx, (_, lawyer) in enumerate(lawyers_df.iterrows()):
         with cols[idx % 3]:
             with st.expander(f"🧑‍⚖️ {lawyer['Last Name']}", expanded=False):
-                st.markdown(f"""
-                **Name:**  
-                {lawyer['Last Name']}
-                
-                **Title:**  
-                {lawyer['Level/Title']}
-                
-                **Expertise:**  
-                {"• " + str(lawyer['Area of Practise + Add Info']).replace(', ', '\n• ')}
-                """)
+                content = "**Name:**\n"
+                content += f"{lawyer['Last Name']}\n\n"
+                content += "**Title:**\n"
+                content += f"{lawyer['Level/Title']}\n\n"
+                content += "**Expertise:**\n"
+                content += "• " + str(lawyer['Area of Practise + Add Info']).replace(', ', '\n• ')
+                st.markdown(content)
 
 def main():
     st.title("🧑‍⚖️ Legal Expert Matcher")
