@@ -3,6 +3,7 @@ import pandas as pd
 from anthropic import Anthropic
 from dotenv import load_dotenv
 import os
+import json
 
 load_dotenv()
 anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
@@ -11,12 +12,103 @@ def load_data():
     df = pd.read_csv('BD_Caravel.csv')
     return df[['Last Name', 'Level/Title', 'Area of Practise + Add Info']]
 
-def get_practice_areas(lawyers_df):
-    all_areas = set()
-    for areas in lawyers_df['Area of Practise + Add Info'].dropna():
-        areas_list = [area.strip() for area in str(areas).split(',')]
-        all_areas.update(areas_list)
-    return sorted(list(all_areas))
+def format_lawyers_data(lawyers_df):
+    """Format lawyer data as structured JSON for Claude"""
+    lawyers_data = []
+    for _, row in lawyers_df.iterrows():
+        lawyer = {
+            "name": row['Last Name'],
+            "title": row['Level/Title'],
+            "expertise": [area.strip() for area in str(row['Area of Practise + Add Info']).split(',')]
+        }
+        lawyers_data.append(lawyer)
+    return json.dumps(lawyers_data, indent=2)
+
+def get_claude_response(query, lawyers_df):
+    lawyers_json = format_lawyers_data(lawyers_df)
+    
+    prompt = f"""<input>
+CLIENT QUERY: {query}
+
+AVAILABLE LAWYERS (JSON):
+{lawyers_json}
+</input>
+
+You are a legal expert matching system. Analyze the client query and available lawyers to provide the best matches.
+
+REQUIREMENTS:
+- If query involves IP law, tech, software: Monica Goyal MUST be in top results
+- For IP/tech queries: Include Alex Stack after Monica Goyal
+- Sort matches by expertise relevance to query
+- Maximum 5 matches
+
+Respond in this exact format:
+
+<matches>
+<match>
+<rank>1</rank>
+<name>Full Name</name>
+<expertise>Key relevant expertise areas</expertise>
+<reason>Brief explanation why this lawyer matches</reason>
+</match>
+</matches>"""
+
+    try:
+        response = anthropic.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return parse_claude_response(response.content[0].text)
+    except Exception as e:
+        st.error(f"Error getting recommendations: {str(e)}")
+        return None
+
+def parse_claude_response(response):
+    """Parse Claude's XML response into a DataFrame"""
+    try:
+        # Extract content between <matches> tags
+        import re
+        matches_content = re.search(r'<matches>(.*?)</matches>', response, re.DOTALL)
+        if not matches_content:
+            return pd.DataFrame()
+            
+        # Parse individual matches
+        matches = []
+        for match in re.finditer(r'<match>(.*?)</match>', matches_content.group(1), re.DOTALL):
+            match_content = match.group(1)
+            
+            # Extract fields
+            rank = re.search(r'<rank>(.*?)</rank>', match_content).group(1)
+            name = re.search(r'<name>(.*?)</name>', match_content).group(1)
+            expertise = re.search(r'<expertise>(.*?)</expertise>', match_content).group(1)
+            reason = re.search(r'<reason>(.*?)</reason>', match_content).group(1)
+            
+            matches.append({
+                'Rank': int(rank),
+                'Name': name,
+                'Key Expertise': expertise,
+                'Recommendation Reason': reason
+            })
+            
+        df = pd.DataFrame(matches)
+        return df.sort_values('Rank')
+    except Exception as e:
+        st.error(f"Error parsing response: {str(e)}")
+        return pd.DataFrame()
+
+def display_recommendations(matches_df):
+    if matches_df is not None and not matches_df.empty:
+        st.write("### 🎯 Top Matches")
+        st.dataframe(
+            matches_df,
+            column_config={
+                "Rank": st.column_config.NumberColumn(format="%d"),
+                "Recommendation Reason": st.column_config.TextColumn(width="large")
+            },
+            hide_index=True
+        )
+        st.markdown("---")
 
 def create_lawyer_cards(lawyers_df):
     if lawyers_df.empty:
@@ -31,133 +123,28 @@ def create_lawyer_cards(lawyers_df):
     for idx, (_, lawyer) in enumerate(lawyers_df.iterrows()):
         with cols[idx % 3]:
             with st.expander(f"🧑‍⚖️ {lawyer['Last Name']}", expanded=False):
-                content = "**Name:**  \n"
-                content += f"{lawyer['Last Name']}  \n\n"
-                content += "**Title:**  \n"
-                content += f"{lawyer['Level/Title']}  \n\n"
-                content += "**Expertise:**  \n"
-                content += "• " + str(lawyer['Area of Practise + Add Info']).replace(', ', '\n• ')
-                st.markdown(content)
-
-def get_claude_response(query, lawyers_df):
-    summary_text = "Available Lawyers and Their Expertise:\n\n"
-    for _, lawyer in lawyers_df.iterrows():
-        summary_text += f"- {lawyer['Last Name']}\n"
-        summary_text += f"  Expertise: {lawyer['Area of Practise + Add Info']}\n\n"
-
-    prompt = f"""You are a legal staffing assistant matching client needs with lawyers' core expertise areas.
-
-Key requirements:
-- If the query involves IP law, intellectual property, software licensing, or technology, ALWAYS include Monica Goyal in the top results
-- For IP/technology queries, Alex Stack should be included but ranked after Monica Goyal
-- Base matches purely on expertise alignment
-- Return full names of attorneys
-
-Client Need: {query}
-
-{summary_text}
-
-Provide 3-5 best matches in this exact format:
-
-MATCH_START
-Rank: 1
-Name: [Full Name]
-Key Expertise: [Primary relevant expertise areas]
-Recommendation Reason: [Brief explanation of match, max 150 chars]
-MATCH_END
-
-Important:
-- Monica Goyal must be highly ranked for all IP/tech queries
-- Focus on exact expertise matches
-- Keep recommendation reasons concise"""
-
-    try:
-        response = anthropic.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1500,
-            messages=[{
-                "role": "user",
-                "content": prompt
-            }]
-        )
-        return parse_claude_response(response.content[0].text)
-    except Exception as e:
-        st.error(f"Error getting recommendations: {str(e)}")
-        return None
-
-def parse_claude_response(response):
-    matches = []
-    for match in response.split('MATCH_START')[1:]:
-        match_data = {}
-        lines = match.split('MATCH_END')[0].strip().split('\n')
-        
-        for line in lines:
-            if ':' in line:
-                key, value = line.split(':', 1)
-                match_data[key.strip()] = value.strip()
-        
-        if match_data:
-            matches.append(match_data)
-    
-    df = pd.DataFrame(matches)
-    if not df.empty:
-        desired_columns = ['Rank', 'Name', 'Key Expertise', 'Recommendation Reason']
-        df = df[desired_columns]
-        df['Rank'] = pd.to_numeric(df['Rank'])
-        df = df.sort_values('Rank')
-    
-    return df
-
-def display_recommendations(query, filtered_df):
-    matches_df = get_claude_response(query, filtered_df)
-    if matches_df is not None and not matches_df.empty:
-        st.write("### 🎯 Top Matches")
-        st.dataframe(matches_df)
-        st.markdown("---")
+                st.markdown(f"""
+                **Name:**  
+                {lawyer['Last Name']}
+                
+                **Title:**  
+                {lawyer['Level/Title']}
+                
+                **Expertise:**  
+                {"• " + str(lawyer['Area of Practise + Add Info']).replace(', ', '\n• ')}
+                """)
 
 def main():
     st.title("🧑‍⚖️ Legal Expert Matcher")
     
     try:
         lawyers_df = load_data()
-        st.sidebar.title("Filters")
-        
-        practice_areas = get_practice_areas(lawyers_df)
-        selected_practice_area = st.sidebar.selectbox(
-            "Practice Area",
-            ["All"] + practice_areas
-        )
         
         st.write("### How can we help you find the right legal expert?")
-        st.write("Tell us about your legal needs and we'll match you with the best available experts.")
-        
-        examples = [
-            "I need a lawyer experienced in intellectual property and software licensing",
-            "Looking for someone who handles business startups and corporate governance",
-            "Need help with technology transactions and SaaS agreements",
-            "Who would be best for mergers and acquisitions in the technology sector?"
-        ]
-        
-        col1, col2 = st.columns(2)
-        for i, example in enumerate(examples):
-            if i % 2 == 0:
-                if col1.button(f"🔍 {example}"):
-                    st.session_state.query = example
-                    st.rerun()
-            else:
-                if col2.button(f"🔍 {example}"):
-                    st.session_state.query = example
-                    st.rerun()
-
-        filtered_df = lawyers_df.copy()
-        
-        if selected_practice_area != "All":
-            filtered_df = filtered_df[
-                filtered_df['Area of Practise + Add Info'].str.contains(selected_practice_area, na=False, case=False)
-            ]
+        st.write("Describe your legal needs and we'll match you with the best available experts.")
         
         query = st.text_area(
-            "For more specific matching, describe what you're looking for:",
+            "What type of legal expertise are you looking for?",
             value=st.session_state.get('query', ''),
             placeholder="Example: I need help with intellectual property and software licensing...",
             height=100
@@ -171,13 +158,11 @@ def main():
             st.session_state.query = ''
             st.rerun()
 
-        st.sidebar.markdown("---")
-        st.sidebar.markdown(f"**Showing:** {len(filtered_df)} experts")
-        
         if search and query:
-            display_recommendations(query, filtered_df)
-        else:
-            create_lawyer_cards(filtered_df)
+            matches_df = get_claude_response(query, lawyers_df)
+            display_recommendations(matches_df)
+        
+        create_lawyer_cards(lawyers_df)
             
     except FileNotFoundError:
         st.error("Could not find the required data file. Please check the file location.")
