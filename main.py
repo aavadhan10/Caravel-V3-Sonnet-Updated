@@ -27,13 +27,20 @@ def load_data():
         
         availability_df['Availability'] = availability_df['Hours'].apply(hours_to_availability)
         
+        # Create full name in both dataframes for merging
+        df['Full_Name'] = df['First Name'] + ' ' + df['Last Name']
+        
+        # Merge on full name
         df = df.merge(
             availability_df[['What is your name?', 'Availability']],
-            left_on=lambda x: df['First Name'] + ' ' + df['Last Name'],
+            left_on='Full_Name',
             right_on='What is your name?',
             how='left'
         )
+        
+        # Clean up
         df['Availability'] = df['Availability'].fillna('High')
+        df = df.drop(['Full_Name', 'What is your name?'], axis=1)
         
     except FileNotFoundError:
         df['Availability'] = 'High'
