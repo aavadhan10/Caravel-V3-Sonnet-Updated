@@ -35,12 +35,18 @@ AVAILABLE LAWYERS (JSON):
 
 You are a legal expert matching system. Analyze the client query and available lawyers to provide the best matches.
 
-REQUIREMENTS:
-- If query involves IP law, tech, software: Monica Goyal MUST be in top results
-- For IP/tech queries: Include Alex Stack after Monica Goyal
+MATCHING RULES:
+1. REQUIRED EXPERTISE MATCHES:
+- For tech/software/IT queries: Prioritize Leonard Gaik, Benjamin Rovet, Mark Wainman, Kevin Shnier
+- For M&A + healthcare/tech: Prioritize Adrian Roomes, Lisa Conway, Sonny Bhalla, Jeff Klam, Peter Dale, Peter Goode, Dave McIntyre
+- NEVER include Monica Goyal or Alex Stack in results
+
+2. MATCHING CRITERIA:
 - Sort matches by expertise relevance to query
 - Maximum 5 matches
 - Use full names (first and last) for all lawyers
+- Consider specialization depth and experience length
+- Weight transactional experience heavily when relevant
 
 Respond in this exact format:
 
@@ -49,7 +55,7 @@ Respond in this exact format:
 <rank>1</rank>
 <name>Full Name</name>
 <expertise>Key relevant expertise areas</expertise>
-<reason>Brief explanation why this lawyer matches</reason>
+<reason>Brief explanation why this lawyer matches, including specific relevant experience</reason>
 </match>
 </matches>"""
 
