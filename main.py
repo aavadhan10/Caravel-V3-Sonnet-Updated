@@ -9,9 +9,35 @@ load_dotenv()
 anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
 def load_data():
+    # Load main lawyer data
     df = pd.read_csv('BD_Caravel.csv')
-    if 'Availability' not in df.columns:
-        df['Availability'] = 'High'  # Default value
+    
+    # Load availability data
+    try:
+        availability_df = pd.read_csv('Corrected_Caravel_Law_Availability.csv')
+        availability_df['Hours'] = availability_df['What is your capacity to take on new work for the foreseeable future? Hours per month'].str.extract('(\d+)').astype(float)
+        
+        def hours_to_availability(hours):
+            if hours >= 80:
+                return 'High'
+            elif hours >= 40:
+                return 'Medium'
+            else:
+                return 'Low'
+        
+        availability_df['Availability'] = availability_df['Hours'].apply(hours_to_availability)
+        
+        df = df.merge(
+            availability_df[['What is your name?', 'Availability']],
+            left_on=lambda x: df['First Name'] + ' ' + df['Last Name'],
+            right_on='What is your name?',
+            how='left'
+        )
+        df['Availability'] = df['Availability'].fillna('High')
+        
+    except FileNotFoundError:
+        df['Availability'] = 'High'
+        
     return df[['First Name', 'Last Name', 'Level/Title', 'Area of Practise + Add Info', 'Availability']]
 
 def format_data_for_claude(lawyers_df, availability_filter=None):
@@ -22,8 +48,7 @@ def format_data_for_claude(lawyers_df, availability_filter=None):
     for _, row in lawyers_df.iterrows():
         formatted_data += f"Name: {row['First Name']} {row['Last Name']}\n"
         formatted_data += f"Title: {row['Level/Title']}\n"
-        formatted_data += f"Areas of Practice: {row['Area of Practise + Add Info']}\n"
-        formatted_data += f"Availability: {row['Availability']}\n\n"
+        formatted_data += f"Areas of Practice: {row['Area of Practise + Add Info']}\n\n"
     return formatted_data
 
 def get_claude_response(query, lawyers_df, availability_filter=None):
@@ -55,7 +80,6 @@ Additional rules:
 - Do not recommend Monica Goyal
 - For any M&A or tech-related queries, always consider Jeff Klam, Peter Dale, Peter Goode, and Dave McIntyre as potential matches
 - Maximum 5 recommendations
-- Only recommend lawyers with specified availability level
 - Order by relevance to the specific query
 
 Format your response exactly as:
@@ -137,13 +161,13 @@ def create_lawyer_cards(lawyers_df, availability_filter=None):
     cols = st.columns(3)
     
     for idx, (_, lawyer) in enumerate(lawyers_df.iterrows()):
+        availability_color = {
+            'High': '🟢',
+            'Medium': '🟡',
+            'Low': '🔴'
+        }.get(lawyer['Availability'], '⚪')
+        
         with cols[idx % 3]:
-            availability_color = {
-                'High': '🟢',
-                'Medium': '🟡',
-                'Low': '🔴'
-            }.get(lawyer['Availability'], '⚪')
-            
             with st.expander(f"🧑‍⚖️ {lawyer['First Name']} {lawyer['Last Name']} {availability_color}", expanded=False):
                 content = "**Name:**\n"
                 content += f"{lawyer['First Name']} {lawyer['Last Name']}\n\n"
@@ -160,7 +184,6 @@ def main():
     try:
         lawyers_df = load_data()
         
-        # Sidebar with availability filter
         with st.sidebar:
             st.header("Filters")
             availability_options = ['All', 'High', 'Medium', 'Low']
@@ -172,15 +195,14 @@ def main():
             
             st.markdown("""
             **Availability Legend:**
-            - 🟢 High
-            - 🟡 Medium
-            - 🔴 Low
+            - 🟢 High (80+ hours/month)
+            - 🟡 Medium (40-79 hours/month)
+            - 🔴 Low (<40 hours/month)
             """)
         
         selected_availability = None if availability_filter == 'All' else availability_filter
         
         st.write("### How can we help you find the right legal expert?")
-        st.write("Describe your legal needs and we'll match you with the best available experts.")
         
         query = st.text_area(
             "What type of legal expertise are you looking for?",
@@ -198,7 +220,7 @@ def main():
             st.rerun()
 
         if search and query:
-            matches_df = get_claude_response(query, lawyers_df, selected_availability)
+            matches_df = get_claude_response(query, lawyers_df)  # Availability filter doesn't affect search
             display_recommendations(matches_df)
         
         create_lawyer_cards(lawyers_df, selected_availability)
