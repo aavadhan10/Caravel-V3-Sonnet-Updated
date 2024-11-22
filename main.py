@@ -10,9 +10,8 @@ anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
 def load_data():
     df = pd.read_csv('BD_Caravel.csv')
-    # Add availability column if not present
     if 'Availability' not in df.columns:
-        df['Availability'] = 'Available'  # Default value
+        df['Availability'] = 'High'  # Default value
     return df[['First Name', 'Last Name', 'Level/Title', 'Area of Practise + Add Info', 'Availability']]
 
 def format_data_for_claude(lawyers_df, availability_filter=None):
@@ -30,7 +29,7 @@ def format_data_for_claude(lawyers_df, availability_filter=None):
 def get_claude_response(query, lawyers_df, availability_filter=None):
     lawyers_data = format_data_for_claude(lawyers_df, availability_filter)
     
-    prompt = f"""Here is a database of lawyers and their expertise. Based on the client query, recommend the most suitable lawyers, explaining why each is a good match. Please match the exact experience profiles shown in the database.
+    prompt = f"""Here is a database of lawyers and their expertise. Based on the client query, recommend the most suitable lawyers, explaining why each is a good match.
 
 {lawyers_data}
 
@@ -38,15 +37,15 @@ Client Query: {query}
 
 When analyzing matches, use these specific guidelines:
 1. For technology transaction queries:
-   - Priority: Leonard Gaik, Kevin Michael Shnier, Benjamin Rovet, Mark Wainman
+   - Priority: Leonard Gaik, Kevin Michael Shnier, Benjamin Rovet, Mark Wainman, Jeff Klam, Peter Dale, Peter Goode, Dave McIntyre
    - Focus on their specific tech industry experience
 
 2. For M&A + healthcare/technology:
-   - Priority: Adrian Roomes, Ajay Krishnan, Lisa Conway, Sonny Bhalla
-   - Consider their healthcare sector expertise
+   - Priority: Adrian Roomes, Ajay Krishnan, Lisa Conway, Sonny Bhalla, Jeff Klam, Peter Dale, Peter Goode, Dave McIntyre
+   - Consider their healthcare sector and M&A expertise
 
 3. For technology M&A/acquisition queries:
-   - Priority: Leonard Gaik, Kevin Michael Shnier, Peter Torn, Neil Kothari
+   - Priority: Leonard Gaik, Kevin Michael Shnier, Peter Torn, Neil Kothari, Jeff Klam, Peter Dale, Peter Goode, Dave McIntyre
    - Focus on their M&A and technology experience
 
 4. For IP matters:
@@ -54,9 +53,9 @@ When analyzing matches, use these specific guidelines:
 
 Additional rules:
 - Do not recommend Monica Goyal
-- Match the exact experience descriptions from the profiles
+- For any M&A or tech-related queries, always consider Jeff Klam, Peter Dale, Peter Goode, and Dave McIntyre as potential matches
 - Maximum 5 recommendations
-- Only recommend available lawyers based on the availability filter
+- Only recommend lawyers with specified availability level
 - Order by relevance to the specific query
 
 Format your response exactly as:
@@ -65,7 +64,7 @@ Format your response exactly as:
 <rank>1</rank>
 <name>Full Name</name>
 <expertise>Key relevant expertise areas</expertise>
-<reason>Specific explanation referencing their exact experience as shown in their profile</reason>
+<reason>Specific explanation referencing their exact experience</reason>
 </match>
 </matches>"""
 
@@ -74,7 +73,7 @@ Format your response exactly as:
             model="claude-3-5-sonnet-20241022",
             max_tokens=1500,
             temperature=0,
-            system="Precisely match the lawyers and their experience as shown in the profiles. Maintain exact names and experience descriptions.",
+            system="Precisely match the lawyers and their experience as shown in the profiles. Always consider Jeff Klam, Peter Dale, Peter Goode, and Dave McIntyre for M&A and tech queries.",
             messages=[{"role": "user", "content": prompt}]
         )
         return parse_claude_response(response.content[0].text)
@@ -139,14 +138,20 @@ def create_lawyer_cards(lawyers_df, availability_filter=None):
     
     for idx, (_, lawyer) in enumerate(lawyers_df.iterrows()):
         with cols[idx % 3]:
-            with st.expander(f"🧑‍⚖️ {lawyer['First Name']} {lawyer['Last Name']}", expanded=False):
+            availability_color = {
+                'High': '🟢',
+                'Medium': '🟡',
+                'Low': '🔴'
+            }.get(lawyer['Availability'], '⚪')
+            
+            with st.expander(f"🧑‍⚖️ {lawyer['First Name']} {lawyer['Last Name']} {availability_color}", expanded=False):
                 content = "**Name:**\n"
                 content += f"{lawyer['First Name']} {lawyer['Last Name']}\n\n"
                 content += "**Title:**\n"
                 content += f"{lawyer['Level/Title']}\n\n"
                 content += "**Expertise:**\n"
                 content += "• " + str(lawyer['Area of Practise + Add Info']).replace(', ', '\n• ')
-                content += f"\n\n**Availability:**\n{lawyer['Availability']}"
+                content += f"\n\n**Availability:** {availability_color} {lawyer['Availability']}"
                 st.markdown(content)
 
 def main():
@@ -158,12 +163,19 @@ def main():
         # Sidebar with availability filter
         with st.sidebar:
             st.header("Filters")
-            availability_options = ['All'] + sorted(lawyers_df['Availability'].unique().tolist())
+            availability_options = ['All', 'High', 'Medium', 'Low']
             availability_filter = st.selectbox(
                 "Lawyer Availability",
                 options=availability_options,
                 index=0
             )
+            
+            st.markdown("""
+            **Availability Legend:**
+            - 🟢 High
+            - 🟡 Medium
+            - 🔴 Low
+            """)
         
         selected_availability = None if availability_filter == 'All' else availability_filter
         
