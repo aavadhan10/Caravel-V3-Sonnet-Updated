@@ -10,41 +10,62 @@ anthropic = Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
 
 def load_data():
     df = pd.read_csv('BD_Caravel.csv')
-    return df[['First Name', 'Last Name', 'Level/Title', 'Area of Practise + Add Info']]
+    # Add availability column if not present
+    if 'Availability' not in df.columns:
+        df['Availability'] = 'Available'  # Default value
+    return df[['First Name', 'Last Name', 'Level/Title', 'Area of Practise + Add Info', 'Availability']]
 
-def format_data_for_claude(lawyers_df):
-    formatted_data = "LAWYER PROFILES:\n\n"
+def format_data_for_claude(lawyers_df, availability_filter=None):
+    if availability_filter:
+        lawyers_df = lawyers_df[lawyers_df['Availability'] == availability_filter]
+    
+    formatted_data = "LAWYER PROFILES WITH DETAILED EXPERIENCE:\n\n"
     for _, row in lawyers_df.iterrows():
         formatted_data += f"Name: {row['First Name']} {row['Last Name']}\n"
         formatted_data += f"Title: {row['Level/Title']}\n"
-        formatted_data += f"Areas of Practice: {row['Area of Practise + Add Info']}\n\n"
+        formatted_data += f"Areas of Practice: {row['Area of Practise + Add Info']}\n"
+        formatted_data += f"Availability: {row['Availability']}\n\n"
     return formatted_data
 
-def get_claude_response(query, lawyers_df):
-    lawyers_data = format_data_for_claude(lawyers_df)
+def get_claude_response(query, lawyers_df, availability_filter=None):
+    lawyers_data = format_data_for_claude(lawyers_df, availability_filter)
     
-    prompt = f"""Here is a database of lawyers and their expertise. Based on the client query, recommend the most suitable lawyers, explaining why each is a good match. Focus on direct experience and expertise relevance.
+    prompt = f"""Here is a database of lawyers and their expertise. Based on the client query, recommend the most suitable lawyers, explaining why each is a good match. Please match the exact experience profiles shown in the database.
 
 {lawyers_data}
 
 Client Query: {query}
 
-When analyzing matches:
-- For tech/IT matters: Consider Leonard Gaik, Benjamin Rovet, Mark Wainman, Kevin Shnier
-- For M&A + healthcare/tech: Consider Jeff Klam, Peter Dale, Peter Goode, Dave McIntyre, Adrian Roomes, Lisa Conway, Sonny Bhalla
-- For IP matters: Consider Alex Stack with other IP experts
-- Do not recommend Monica Goyal
-- Recommend based on directly relevant experience
-- Maximum 5 recommendations
-- Focus on transactional experience when relevant
+When analyzing matches, use these specific guidelines:
+1. For technology transaction queries:
+   - Priority: Leonard Gaik, Kevin Michael Shnier, Benjamin Rovet, Mark Wainman
+   - Focus on their specific tech industry experience
 
-Format your response in XML tags exactly as shown:
+2. For M&A + healthcare/technology:
+   - Priority: Adrian Roomes, Ajay Krishnan, Lisa Conway, Sonny Bhalla
+   - Consider their healthcare sector expertise
+
+3. For technology M&A/acquisition queries:
+   - Priority: Leonard Gaik, Kevin Michael Shnier, Peter Torn, Neil Kothari
+   - Focus on their M&A and technology experience
+
+4. For IP matters:
+   - Include Alex Stack with other IP experts
+
+Additional rules:
+- Do not recommend Monica Goyal
+- Match the exact experience descriptions from the profiles
+- Maximum 5 recommendations
+- Only recommend available lawyers based on the availability filter
+- Order by relevance to the specific query
+
+Format your response exactly as:
 <matches>
 <match>
 <rank>1</rank>
 <name>Full Name</name>
 <expertise>Key relevant expertise areas</expertise>
-<reason>Specific explanation referencing their relevant experience</reason>
+<reason>Specific explanation referencing their exact experience as shown in their profile</reason>
 </match>
 </matches>"""
 
@@ -53,7 +74,7 @@ Format your response in XML tags exactly as shown:
             model="claude-3-5-sonnet-20241022",
             max_tokens=1500,
             temperature=0,
-            system="You are in Concise Mode. Provide direct, focused responses while maintaining accuracy and completeness.",
+            system="Precisely match the lawyers and their experience as shown in the profiles. Maintain exact names and experience descriptions.",
             messages=[{"role": "user", "content": prompt}]
         )
         return parse_claude_response(response.content[0].text)
@@ -103,7 +124,10 @@ def display_recommendations(matches_df):
         )
         st.markdown("---")
 
-def create_lawyer_cards(lawyers_df):
+def create_lawyer_cards(lawyers_df, availability_filter=None):
+    if availability_filter:
+        lawyers_df = lawyers_df[lawyers_df['Availability'] == availability_filter]
+        
     if lawyers_df.empty:
         st.warning("No lawyers match the selected filters.")
         return
@@ -122,6 +146,7 @@ def create_lawyer_cards(lawyers_df):
                 content += f"{lawyer['Level/Title']}\n\n"
                 content += "**Expertise:**\n"
                 content += "• " + str(lawyer['Area of Practise + Add Info']).replace(', ', '\n• ')
+                content += f"\n\n**Availability:**\n{lawyer['Availability']}"
                 st.markdown(content)
 
 def main():
@@ -129,6 +154,18 @@ def main():
     
     try:
         lawyers_df = load_data()
+        
+        # Sidebar with availability filter
+        with st.sidebar:
+            st.header("Filters")
+            availability_options = ['All'] + sorted(lawyers_df['Availability'].unique().tolist())
+            availability_filter = st.selectbox(
+                "Lawyer Availability",
+                options=availability_options,
+                index=0
+            )
+        
+        selected_availability = None if availability_filter == 'All' else availability_filter
         
         st.write("### How can we help you find the right legal expert?")
         st.write("Describe your legal needs and we'll match you with the best available experts.")
@@ -149,10 +186,10 @@ def main():
             st.rerun()
 
         if search and query:
-            matches_df = get_claude_response(query, lawyers_df)
+            matches_df = get_claude_response(query, lawyers_df, selected_availability)
             display_recommendations(matches_df)
         
-        create_lawyer_cards(lawyers_df)
+        create_lawyer_cards(lawyers_df, selected_availability)
             
     except FileNotFoundError:
         st.error("Could not find the required data file. Please check the file location.")
