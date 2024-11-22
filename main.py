@@ -12,50 +12,39 @@ def load_data():
     df = pd.read_csv('BD_Caravel.csv')
     return df[['First Name', 'Last Name', 'Level/Title', 'Area of Practise + Add Info']]
 
-def format_lawyers_data(lawyers_df):
-    lawyers_data = []
+def format_data_for_claude(lawyers_df):
+    formatted_data = "LAWYER PROFILES:\n\n"
     for _, row in lawyers_df.iterrows():
-        lawyer = {
-            "name": f"{row['First Name']} {row['Last Name']}",
-            "title": row['Level/Title'],
-            "expertise": [area.strip() for area in str(row['Area of Practise + Add Info']).split(',')]
-        }
-        lawyers_data.append(lawyer)
-    return json.dumps(lawyers_data, indent=2)
+        formatted_data += f"Name: {row['First Name']} {row['Last Name']}\n"
+        formatted_data += f"Title: {row['Level/Title']}\n"
+        formatted_data += f"Areas of Practice: {row['Area of Practise + Add Info']}\n\n"
+    return formatted_data
 
 def get_claude_response(query, lawyers_df):
-    lawyers_json = format_lawyers_data(lawyers_df)
+    lawyers_data = format_data_for_claude(lawyers_df)
     
-    prompt = f"""<input>
-CLIENT QUERY: {query}
+    prompt = f"""Here is a database of lawyers and their expertise. Based on the client query, recommend the most suitable lawyers, explaining why each is a good match. Focus on direct experience and expertise relevance.
 
-AVAILABLE LAWYERS (JSON):
-{lawyers_json}
-</input>
+{lawyers_data}
 
-You are a legal expert matching system. Analyze the client query and available lawyers to provide the best matches.
+Client Query: {query}
 
-MATCHING RULES:
-1. REQUIRED EXPERTISE MATCHES:
-- For tech/software/IT queries: Prioritize Leonard Gaik, Benjamin Rovet, Mark Wainman, Kevin Shnier
-- For M&A + healthcare/tech: Prioritize Adrian Roomes, Lisa Conway, Sonny Bhalla, Jeff Klam, Peter Dale, Peter Goode, Dave McIntyre
-- NEVER include Monica Goyal or Alex Stack in results
+When analyzing matches:
+- For tech/IT matters: Consider Leonard Gaik, Benjamin Rovet, Mark Wainman, Kevin Shnier
+- For M&A + healthcare/tech: Consider Jeff Klam, Peter Dale, Peter Goode, Dave McIntyre, Adrian Roomes, Lisa Conway, Sonny Bhalla
+- For IP matters: Consider Alex Stack with other IP experts
+- Do not recommend Monica Goyal
+- Recommend based on directly relevant experience
+- Maximum 5 recommendations
+- Focus on transactional experience when relevant
 
-2. MATCHING CRITERIA:
-- Sort matches by expertise relevance to query
-- Maximum 5 matches
-- Use full names (first and last) for all lawyers
-- Consider specialization depth and experience length
-- Weight transactional experience heavily when relevant
-
-Respond in this exact format:
-
+Format your response in XML tags exactly as shown:
 <matches>
 <match>
 <rank>1</rank>
 <name>Full Name</name>
 <expertise>Key relevant expertise areas</expertise>
-<reason>Brief explanation why this lawyer matches, including specific relevant experience</reason>
+<reason>Specific explanation referencing their relevant experience</reason>
 </match>
 </matches>"""
 
@@ -63,6 +52,8 @@ Respond in this exact format:
         response = anthropic.messages.create(
             model="claude-3-5-sonnet-20241022",
             max_tokens=1500,
+            temperature=0,
+            system="You are in Concise Mode. Provide direct, focused responses while maintaining accuracy and completeness.",
             messages=[{"role": "user", "content": prompt}]
         )
         return parse_claude_response(response.content[0].text)
