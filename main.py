@@ -15,9 +15,14 @@ def load_data():
     # Load availability data
     try:
         availability_df = pd.read_csv('Corrected_Caravel_Law_Availability.csv')
-        availability_df['Hours'] = availability_df['What is your capacity to take on new work for the foreseeable future? Hours per month'].str.extract('(\d+)').astype(float)
+        # Convert hours to numeric, handling the '80+' case
+        availability_df['Hours'] = availability_df['What is your capacity to take on new work for the foreseeable future? Hours per month'].apply(
+            lambda x: 80 if isinstance(x, str) and '+' in x else float(x.split()[0]) if isinstance(x, str) else float(x)
+        )
         
         def hours_to_availability(hours):
+            if pd.isna(hours):
+                return 'High'  # Default value
             if hours >= 80:
                 return 'High'
             elif hours >= 40:
@@ -29,20 +34,22 @@ def load_data():
         
         # Create full name in both dataframes for merging
         df['Full_Name'] = df['First Name'] + ' ' + df['Last Name']
+        availability_df['Full_Name'] = availability_df['What is your name?']
         
         # Merge on full name
-        df = df.merge(
-            availability_df[['What is your name?', 'Availability']],
-            left_on='Full_Name',
-            right_on='What is your name?',
+        df = pd.merge(
+            df,
+            availability_df[['Full_Name', 'Availability']],
+            on='Full_Name',
             how='left'
         )
         
         # Clean up
         df['Availability'] = df['Availability'].fillna('High')
-        df = df.drop(['Full_Name', 'What is your name?'], axis=1)
+        df = df.drop(['Full_Name'], axis=1)
         
-    except FileNotFoundError:
+    except Exception as e:
+        print(f"Error loading availability data: {e}")
         df['Availability'] = 'High'
         
     return df[['First Name', 'Last Name', 'Level/Title', 'Area of Practise + Add Info', 'Availability']]
